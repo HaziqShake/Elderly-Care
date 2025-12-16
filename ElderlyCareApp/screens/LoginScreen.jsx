@@ -1,97 +1,138 @@
-// screens/LoginScreen.js
 import React, { useState } from "react";
 import {
-  SafeAreaView,
   View,
   Text,
   TextInput,
   TouchableOpacity,
   StyleSheet,
-  KeyboardAvoidingView,
-  Platform,
+  Alert,
 } from "react-native";
-import { MaterialIcons } from "@expo/vector-icons"; // icon library
+import { supabase } from "../supabase/supabaseClient";
 
-export default function LoginScreen({ onLogin }) {
-  const [name, setName] = useState("");
+export default function LoginScreen() {
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [isSignup, setIsSignup] = useState(false);
+  const [loading, setLoading] = useState(false);
 
-  function handleLogin() {
-    onLogin({ name: name.trim() || "Manager" });
-  }
+  const handleAuth = async () => {
+    if (!email || !password) {
+      Alert.alert("Missing fields", "Enter email and password");
+      return;
+    }
+
+    setLoading(true);
+
+    try {
+      if (isSignup) {
+        const { error } = await supabase.auth.signUp({
+          email,
+          password,
+        });
+
+        if (error) throw error;
+
+        Alert.alert(
+          "Account created",
+          "You can now log in with your email and password"
+        );
+        setIsSignup(false);
+      } else {
+        const { error } = await supabase.auth.signInWithPassword({
+          email,
+          password,
+        });
+
+        if (error) throw error;
+      }
+    } catch (err) {
+      Alert.alert("Error", err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
 
   return (
-    <SafeAreaView style={{ flex: 1, backgroundColor: "#F7F8FB" }}>
-      <KeyboardAvoidingView
-        style={styles.container}
-        behavior={Platform.select({ ios: "padding", android: undefined })}
+    <View style={styles.container}>
+      <Text style={styles.title}>
+        {isSignup ? "Create Account" : "Login"}
+      </Text>
+
+      <TextInput
+        placeholder="Email"
+        autoCapitalize="none"
+        keyboardType="email-address"
+        style={styles.input}
+        value={email}
+        onChangeText={setEmail}
+      />
+
+      <TextInput
+        placeholder="Password"
+        secureTextEntry
+        style={styles.input}
+        value={password}
+        onChangeText={setPassword}
+      />
+
+      <TouchableOpacity
+        style={styles.primaryButton}
+        onPress={handleAuth}
+        disabled={loading}
       >
-        {/* Blue circular icon placeholder */}
-        <View style={styles.logoWrapper}>
-          <MaterialIcons name="elderly" size={48} color="#fff" />
-        </View>
+        <Text style={styles.primaryButtonText}>
+          {isSignup ? "Sign Up" : "Login"}
+        </Text>
+      </TouchableOpacity>
 
-        {/* Login card */}
-        <View style={styles.card}>
-          <Text style={styles.title}>NestCare Manager</Text>
-          <Text style={styles.subtitle}>Login to continue</Text>
-
-          <TextInput
-            placeholder="Enter your name"
-            value={name}
-            onChangeText={setName}
-            style={styles.input}
-            returnKeyType="done"
-            onSubmitEditing={handleLogin}
-            placeholderTextColor="#9CA3AF"
-          />
-
-          <TouchableOpacity style={styles.button} onPress={handleLogin}>
-            <Text style={styles.buttonText}>Login</Text>
-          </TouchableOpacity>
-        </View>
-      </KeyboardAvoidingView>
-    </SafeAreaView>
+      <TouchableOpacity onPress={() => setIsSignup(!isSignup)}>
+        <Text style={styles.switchText}>
+          {isSignup
+            ? "Already have an account? Login"
+            : "New here? Create an account"}
+        </Text>
+      </TouchableOpacity>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, alignItems: "center", justifyContent: "center", padding: 20 },
-  logoWrapper: {
-    width: 100,
-    height: 100,
-    borderRadius: 50,
-    backgroundColor: "#3B82F6",
-    alignItems: "center",
+  container: {
+    flex: 1,
     justifyContent: "center",
-    marginBottom: 20,
-    elevation: 4,
+    padding: 24,
+    backgroundColor: "#F7F8FB",
   },
-  card: {
-    width: "100%",
-    backgroundColor: "#fff",
-    borderRadius: 16,
-    padding: 20,
-    shadowColor: "#000",
-    shadowOpacity: 0.08,
-    shadowOffset: { width: 0, height: 2 },
-    shadowRadius: 6,
-    elevation: 3,
+  title: {
+    fontSize: 26,
+    fontWeight: "700",
+    color: "#2563EB",
+    marginBottom: 24,
+    textAlign: "center",
   },
-  title: { fontSize: 24, fontWeight: "800", color: "#102A43", marginBottom: 4 },
-  subtitle: { fontSize: 14, color: "#6B7280", marginBottom: 20 },
   input: {
-    backgroundColor: "#F9FAFB",
-    borderWidth: 1,
-    borderColor: "#E5E7EB",
-    borderRadius: 10,
-    padding: 12,
-    marginBottom: 16,
-  },
-  button: {
-    backgroundColor: "#3B82F6",
+    backgroundColor: "white",
     padding: 14,
     borderRadius: 10,
-    alignItems: "center",
+    marginBottom: 12,
+    fontSize: 16,
   },
-  buttonText: { color: "#fff", fontWeight: "700", fontSize: 16 },
+  primaryButton: {
+    backgroundColor: "#2563EB",
+    padding: 14,
+    borderRadius: 10,
+    marginTop: 10,
+  },
+  primaryButtonText: {
+    color: "white",
+    fontWeight: "700",
+    fontSize: 16,
+    textAlign: "center",
+  },
+  switchText: {
+    marginTop: 16,
+    textAlign: "center",
+    color: "#2563EB",
+    fontWeight: "600",
+  },
 });
