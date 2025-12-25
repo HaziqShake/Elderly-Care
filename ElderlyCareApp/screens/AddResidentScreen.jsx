@@ -25,22 +25,40 @@ export default function AddResidentScreen({ navigation }) {
       return;
     }
 
+    const {
+      data: { user },
+      error: userError,
+    } = await supabase.auth.getUser();
+
+    if (userError || !user) {
+      Alert.alert("Error", "User not authenticated");
+      return;
+    }
+
+
     const { error } = await supabase.from("residents").insert([{
       name: form.name,
       age: form.age ? parseInt(form.age) : null,
-      room_number: form.bed_number,  // ✅ maps to DB column
+      room_number: form.bed_number,
       condition: form.condition,
       guardian_name: form.guardian_name,
       guardian_contact: form.guardian_contact,
       photo_url: form.photo_url || "https://via.placeholder.com/70",
+      owner_id: user.id,
     }]);
+
 
     if (error) {
       console.error("Supabase error:", error.message);
       Alert.alert("Error", "Failed to add resident");
     } else {
       Alert.alert("Success", "Resident added successfully");
-      navigation.goBack();
+      if (navigation.canGoBack()) {
+        navigation.goBack();
+      } else {
+        navigation.navigate("Home"); // or "MainTabs"
+      }
+
     }
   };
 
@@ -94,9 +112,9 @@ const styles = StyleSheet.create({
   },
   buttonText: { color: "#fff", fontWeight: "600", fontSize: 16 },
   safe: {
-  flex: 1,
-  backgroundColor: "#fff",
-},
+    flex: 1,
+    backgroundColor: "#fff",
+  },
 
 
 });

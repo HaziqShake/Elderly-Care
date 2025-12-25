@@ -130,11 +130,11 @@ export default function ResidentCardModal({ resident, onClose, onUpdateResident 
   const handlePickResidentPhoto = async () => {
     try {
       const result = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ImagePicker.MediaTypeOptions.Images,
         allowsEditing: true,
         aspect: [1, 1],
         quality: 0.7,
       });
+
 
       if (result.canceled) return;
 
@@ -369,23 +369,40 @@ export default function ResidentCardModal({ resident, onClose, onUpdateResident 
 
   const handleSaveIoEntry = async () => {
     try {
+      const {
+        data: { session },
+        error: sessionError,
+      } = await supabase.auth.getSession();
+
+      if (sessionError || !session || !session.user) {
+        Toast.show({ type: "error", text1: "User not authenticated" });
+        return;
+      }
+
+      const newEntry = {
+        id: Date.now().toString(),
+        resident_id: resident.id,
+        time: new Date().toTimeString().slice(0, 5),
+        intake_ml: newIo.intake_ml || null,
+        urine_ml: newIo.urine_ml || null,
+        stool: newIo.stool || null,
+        date: new Date().toISOString().slice(0, 10),
+      };
+
+      // 1️⃣ Instant UI update
+      setIoEntries((prev) => [newEntry, ...prev]);
+
+      // 2️⃣ Backend sync
       const { error } = await supabase.from("intake_output").insert({
         resident_id: resident.id,
         intake_ml: newIo.intake_ml ? parseInt(newIo.intake_ml) : null,
         urine_ml: newIo.urine_ml ? parseInt(newIo.urine_ml) : null,
         stool: newIo.stool || null,
+        owner_id: session.user.id,
       });
+
       if (error) throw error;
-      setIoEntries((prev) => [
-        {
-          id: Date.now().toString(),
-          time: new Date().toTimeString().slice(0, 5),
-          intake_ml: newIo.intake_ml,
-          urine_ml: newIo.urine_ml,
-          stool: newIo.stool,
-        },
-        ...prev,
-      ]);
+
       setNewIo({ intake_ml: "", urine_ml: "", stool: "" });
       setShowIoForm(false);
       Toast.show({ type: "success", text1: "I/O saved" });
@@ -394,10 +411,21 @@ export default function ResidentCardModal({ resident, onClose, onUpdateResident 
       Toast.show({ type: "error", text1: "I/O save failed" });
     }
   };
+
   /* --------------------------------------------------
    SPECIFIC TASK ADD/EDIT MODAL
 -------------------------------------------------- */
   const saveSpecificTaskFromModal = async () => {
+    const {
+      data: { user },
+      error: userError,
+    } = await supabase.auth.getUser();
+
+    if (userError || !user) {
+      Toast.show({ type: "error", text1: "User not authenticated" });
+      return;
+    }
+
     const timeSql = moment(taskTime).format("HH:mm:ss");
 
     // ADD NEW TASK
@@ -409,6 +437,7 @@ export default function ResidentCardModal({ resident, onClose, onUpdateResident 
           label: taskLabel,
           type: "specific",
           default_time: timeSql,
+          owner_id: user.id,
         })
         .select()
         .single();
@@ -420,11 +449,12 @@ export default function ResidentCardModal({ resident, onClose, onUpdateResident 
 
       // 2) Create resident_activities mapping
       await supabase.from("resident_activities").insert({
-        label: taskLabel,
-        type: "specific",
-        default_time: timeSql,
-        repeat_days: repeatDays,
+        resident_id: resident.id,
+        activity_id: act.id,
+        scheduled_time: timeSql,
+        owner_id: user.id,
       });
+
 
       // 3) Create today's daily instance
       const today = new Date().toISOString().slice(0, 10);
@@ -435,6 +465,7 @@ export default function ResidentCardModal({ resident, onClose, onUpdateResident 
         scheduled_time: timeSql,
         date: today,
         status: "pending",
+        owner_id: user.id,
       });
     }
 
@@ -534,16 +565,28 @@ export default function ResidentCardModal({ resident, onClose, onUpdateResident 
   const toggleSpecificTaskStatus = async (task) => {
     const newStatus = task.status === "done" ? "pending" : "done";
 
-    const today = new Date().toISOString().slice(0, 10);
+    // 1️⃣ Optimistic UI update (instant)
+    setTasks((prev) =>
+      prev.map((t) =>
+        t.id === task.id ? { ...t, status: newStatus } : t
+      )
+    );
 
-    await supabase
+    // 2️⃣ Backend sync (no waiting for UI)
+    const { error } = await supabase
       .from("daily_task_instances")
       .update({ status: newStatus })
-      .eq("resident_id", resident.id)
-      .eq("activity_id", task.activity_id)
-      .eq("date", today);
+      .eq("id", task.id);
 
-    loadTasks();
+    // 3️⃣ Rollback if backend fails
+    if (error) {
+      setTasks((prev) =>
+        prev.map((t) =>
+          t.id === task.id ? { ...t, status: task.status } : t
+        )
+      );
+    }
+
   };
 
 
@@ -559,11 +602,6 @@ export default function ResidentCardModal({ resident, onClose, onUpdateResident 
               {editMode ? formData.name || "Edit Resident" : formData.name}
             </Text>
             <View style={{ flexDirection: "row", alignItems: "center" }}>
-              {!editMode && (
-                <TouchableOpacity onPress={() => setEditMode(true)} style={{ marginRight: 10 }}>
-                  <MaterialIcons name="edit" size={24} color="#fff" />
-                </TouchableOpacity>
-              )}
               <TouchableOpacity onPress={onClose}>
                 <MaterialIcons name="close" size={26} color="#fff" />
               </TouchableOpacity>
@@ -581,62 +619,132 @@ export default function ResidentCardModal({ resident, onClose, onUpdateResident 
 
 
           <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 24 }}>
-            {/* Profile Info */}
-            <View style={styles.profileRow}>
-              <TouchableOpacity onPress={handlePickResidentPhoto}>
-                {resident.photo_url ? (
-                  <Image
-                    source={{ uri: resident.photo_url }}
-                    style={styles.avatar}
-                  />
-                ) : (
-                  <View style={[styles.avatar, styles.defaultAvatar]}>
-                    <Text style={styles.avatarText}>
-                      {resident.name?.charAt(0)?.toUpperCase() || "?"}
-                    </Text>
-                  </View>
-                )}
-              </TouchableOpacity>
+            {/* -------------------- RESIDENT INFO -------------------- */}
+            <View style={styles.sectionCard}>
+              {/* Section header */}
+              <View
+                style={{
+                  flexDirection: "row",
+                  justifyContent: "space-between",
+                  alignItems: "center",
+                  marginBottom: 12,
+                }}
+              >
+                <Text style={styles.sectionTitle}>Resident Info</Text>
 
-
-              <View style={{ marginLeft: 12, flex: 1 }}>
-                {editMode ? (
-                  <>
-                    <TextInput
-                      style={styles.input}
-                      value={formData.name}
-                      onChangeText={(t) => setFormData({ ...formData, name: t })}
-                      placeholder="Name"
-                    />
-                    <TextInput
-                      style={styles.input}
-                      value={formData.age}
-                      onChangeText={(t) => setFormData({ ...formData, age: t })}
-                      placeholder="Age"
-                      keyboardType="numeric"
-                    />
-                    <TextInput
-                      style={styles.input}
-                      value={formData.room_number}
-                      onChangeText={(t) => setFormData({ ...formData, room_number: t })}
-                      placeholder="Bed Number"
-                    />
-                    <TextInput
-                      style={styles.input}
-                      value={formData.condition}
-                      onChangeText={(t) => setFormData({ ...formData, condition: t })}
-                      placeholder="Condition"
-                    />
-                  </>
+                {!editMode ? (
+                  <TouchableOpacity onPress={() => setEditMode(true)}>
+                    <MaterialIcons name="edit" size={22} color="#2563EB" />
+                  </TouchableOpacity>
                 ) : (
-                  <>
-                    <Text style={styles.info}>🧓 Age: {resident.age}</Text>
-                    <Text style={styles.info}>🛏 Bed: {resident.room_number}</Text>
-                    <Text style={styles.info}>⚕️ Condition: {resident.condition || "N/A"}</Text>
-                  </>
+                  <TouchableOpacity onPress={handleCancelResident}>
+                    <MaterialIcons name="close" size={22} color="#ef4444" />
+                  </TouchableOpacity>
                 )}
               </View>
+
+              {/* Avatar + Info row */}
+              <View style={{ flexDirection: "row", alignItems: "center" }}>
+                <TouchableOpacity onPress={handlePickResidentPhoto}>
+                  <View>
+                    {resident.photo_url ? (
+                      <Image source={{ uri: resident.photo_url }} style={styles.avatar} />
+                    ) : (
+                      <View style={[styles.avatar, styles.defaultAvatar]}>
+                        <MaterialIcons name="person-outline" size={44} color="#9CA3AF" />
+                      </View>
+                    )}
+
+                    {/* Camera badge */}
+                    <View style={styles.cameraBadge}>
+                      <MaterialIcons name="camera-alt" size={16} color="#fff" />
+                    </View>
+                  </View>
+                </TouchableOpacity>
+
+                <View style={{ marginLeft: 14, flex: 1 }}>
+                  {editMode ? (
+                    <>
+                      <TextInput
+                        style={styles.input}
+                        value={formData.name}
+                        onChangeText={(t) => setFormData({ ...formData, name: t })}
+                        placeholder="Name"
+                      />
+
+                      <TextInput
+                        style={styles.input}
+                        value={formData.age}
+                        onChangeText={(t) => setFormData({ ...formData, age: t })}
+                        placeholder="Age"
+                        keyboardType="numeric"
+                      />
+
+                      <TextInput
+                        style={styles.input}
+                        value={formData.room_number}
+                        onChangeText={(t) =>
+                          setFormData({ ...formData, room_number: t })
+                        }
+                        placeholder="Bed / Room"
+                      />
+
+                      <TextInput
+                        style={styles.input}
+                        value={formData.condition}
+                        onChangeText={(t) =>
+                          setFormData({ ...formData, condition: t })
+                        }
+                        placeholder="Condition"
+                      />
+                    </>
+                  ) : (
+                    <>
+                      <Text style={styles.info}>🧓 Age: {resident.age || "—"}</Text>
+                      <Text style={styles.info}>
+                        🛏 Bed: {resident.room_number || "—"}
+                      </Text>
+                      <Text style={styles.info}>
+                        ⚕️ Condition: {resident.condition || "—"}
+                      </Text>
+                    </>
+                  )}
+                </View>
+              </View>
+
+              {/* Save / Cancel (Resident Info only) */}
+              {editMode && (
+                <View
+                  style={{
+                    flexDirection: "row",
+                    marginTop: 14,
+                    marginHorizontal: 12,
+                  }}
+                >
+                  <TouchableOpacity
+                    style={[styles.cancelBtn, { flex: 1, marginRight: 8 }]}
+                    onPress={handleCancelResident}
+                    disabled={savingResident}
+                  >
+                    <Text style={styles.cancelText}>Cancel</Text>
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    style={[styles.saveBtn, { flex: 1, marginLeft: 8 }]}
+                    onPress={handleSaveResident}
+                    disabled={savingResident}
+                  >
+                    {savingResident ? (
+                      <ActivityIndicator color="#fff" />
+                    ) : (
+                      <Text style={styles.saveText}>Save</Text>
+                    )}
+                  </TouchableOpacity>
+                </View>
+              )}
             </View>
+
+
 
             {/* -------------------- SPECIFIC TASKS (NEW UI) -------------------- */}
             <View style={styles.sectionCard}>
@@ -893,19 +1001,6 @@ export default function ResidentCardModal({ resident, onClose, onUpdateResident 
 
             </View>
 
-            {/* Save / Cancel (global resident info) */}
-            {editMode && (
-              <View style={styles.bottomActions}>
-                <TouchableOpacity style={styles.cancelBtn} onPress={handleCancelResident} disabled={savingResident}>
-                  <Text style={styles.cancelText}>Cancel</Text>
-                </TouchableOpacity>
-
-                <TouchableOpacity style={styles.saveBtn} onPress={handleSaveResident} disabled={savingResident}>
-                  {savingResident ? <ActivityIndicator color="#fff" /> : <Text style={styles.saveText}>Save Changes</Text>}
-                </TouchableOpacity>
-              </View>
-            )}
-
             {/* Intake/Output Form Modal */}
             {showIoForm && (
               <Modal visible transparent animationType="fade">
@@ -1003,20 +1098,35 @@ export default function ResidentCardModal({ resident, onClose, onUpdateResident 
                         style={[styles.saveBtn, { flex: 1 }]}
                         onPress={async () => {
                           try {
+                            const {
+                              data: { session },
+                            } = await supabase.auth.getSession();
+
+                            if (!session?.user) {
+                              Toast.show({ type: "error", text1: "User not authenticated" });
+                              return;
+                            }
+
                             const { error } = await supabase.from("vitals").insert({
                               resident_id: resident.id,
                               time: moment(vitalTime).format("HH:mm:ss"),
                               ...vitalForm,
+                              owner_id: session.user.id, // ✅ REQUIRED
                             });
+
 
                             if (error) throw error;
                             setVitals((prev) => [
                               {
                                 id: Date.now().toString(),
+                                resident_id: resident.id,
                                 ...vitalForm,
+                                time: moment(vitalTime).format("HH:mm:ss"),
+                                date: new Date().toISOString().slice(0, 10),
                               },
                               ...prev,
                             ]);
+
                             setShowVitalsForm(false);
                             setVitalForm({
                               bp: "",
@@ -1099,8 +1209,13 @@ const styles = StyleSheet.create({
     backgroundColor: "#E5E7EB",
   },
   defaultAvatar: {
-    backgroundColor: "#E5E7EB",
+    backgroundColor: "#F9FAFB", // much lighter
+    borderWidth: 1,
+    borderColor: "#E5E7EB",
+    justifyContent: "center",
+    alignItems: "center",
   },
+
   avatarText: {
     fontSize: 32,
     fontWeight: "700",
@@ -1440,5 +1555,12 @@ const styles = StyleSheet.create({
   dayTextActive: {
     color: "#fff",
   },
-
+  cameraBadge: {
+    position: "absolute",
+    bottom: 0,
+    right: 0,
+    backgroundColor: "#2563EB",
+    borderRadius: 12,
+    padding: 4,
+  },
 });

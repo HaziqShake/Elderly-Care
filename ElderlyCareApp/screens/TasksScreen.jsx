@@ -9,6 +9,7 @@ import {
   TextInput,
   StyleSheet,
   TouchableOpacity,
+  Alert,
 } from "react-native";
 import { supabase } from "../supabase/supabaseClient";
 import { SafeAreaView } from "react-native-safe-area-context";
@@ -35,18 +36,18 @@ const WEEKDAYS = [
 function CommonTaskModal({ visible, editingTask, onClose, onSave }) {
   const [label, setLabel] = useState("");
   const [time, setTime] = useState(new Date());
-  const [repeatDays, setRepeatDays] = useState([0,1,2,3,4,5,6]);
+  const [repeatDays, setRepeatDays] = useState([0, 1, 2, 3, 4, 5, 6]);
   const [showPicker, setShowPicker] = useState(false);
 
   useEffect(() => {
     if (editingTask) {
       setLabel(editingTask.label);
       setTime(moment(editingTask.scheduled_time, "HH:mm:ss").toDate());
-      setRepeatDays(editingTask.repeat_days || [0,1,2,3,4,5,6]);
+      setRepeatDays(editingTask.repeat_days || [0, 1, 2, 3, 4, 5, 6]);
     } else {
       setLabel("");
       setTime(new Date());
-      setRepeatDays([0,1,2,3,4,5,6]);
+      setRepeatDays([0, 1, 2, 3, 4, 5, 6]);
     }
   }, [editingTask]);
 
@@ -201,56 +202,134 @@ export default function TasksScreen() {
      TOGGLE STATUS
   --------------------------------------------------- */
   const toggleCommonTask = async (task) => {
-    if (!isToday) return;
+    const newStatus = task.status === "done" ? "pending" : "done";
 
-    await supabase
+    setCommonTasks((prev) =>
+      prev.map((t) =>
+        t.id === task.id ? { ...t, status: newStatus } : t
+      )
+    );
+
+    const { error } = await supabase
       .from("daily_task_instances")
-      .update({
-        status: task.status === "done" ? "pending" : "done",
-      })
+      .update({ status: newStatus })
       .eq("id", task.id);
 
-    loadTasks();
+    if (error) {
+      setCommonTasks((prev) =>
+        prev.map((t) =>
+          t.id === task.id ? { ...t, status: task.status } : t
+        )
+      );
+    }
   };
+
 
   /* ---------------------------------------------------
      SAVE ADD / EDIT
   --------------------------------------------------- */
   const handleSaveCommonTask = async ({ label, timeSql, repeat_days }) => {
+    const {
+      data: { user },
+      error: userError,
+    } = await supabase.auth.getUser();
+
+    if (userError || !user) {
+      Alert.alert("Error", "User not authenticated");
+      return;
+    }
+
     if (!editingTask) {
-      const { data: activity } = await supabase
+      const { data: activity, error: actErr } = await supabase
         .from("activities")
         .insert({
           label,
           type: "common",
           default_time: timeSql,
           repeat_days,
+          owner_id: user.id,
         })
         .select()
         .single();
 
-      await supabase.from("daily_task_instances").insert({
-        activity_id: activity.id,
-        resident_id: null,
-        scheduled_time: timeSql,
-        date: todayStr,
-        status: "pending",
-      });
+      if (actErr) {
+        Alert.alert("Error", actErr.message);
+        return;
+      }
+
+      const { error: instErr } = await supabase
+        .from("daily_task_instances")
+        .insert({
+          activity_id: activity.id,
+          resident_id: null,
+          scheduled_time: timeSql,
+          date: todayStr,
+          status: "pending",
+          owner_id: user.id,
+        });
+
+      if (instErr) {
+        Alert.alert("Error", instErr.message);
+        return;
+      }
     } else {
-      await supabase
+      const { error } = await supabase
         .from("activities")
         .update({
           label,
           default_time: timeSql,
           repeat_days,
         })
-        .eq("id", editingTask.activity_id);
+        .eq("id", editingTask.activity_id)
+        .eq("owner_id", user.id);
+
+      if (error) {
+        Alert.alert("Error", error.message);
+        return;
+      }
     }
 
     setModalVisible(false);
     setEditingTask(null);
     loadTasks();
   };
+  const deleteCommonTask = async (task) => {
+    try {
+      const {
+        data: { user },
+        error: userError,
+      } = await supabase.auth.getUser();
+
+      if (userError || !user) {
+        Alert.alert("Error", "User not authenticated");
+        return;
+      }
+
+      // 1️⃣ Delete daily instances (today + future)
+      await supabase
+        .from("daily_task_instances")
+        .delete()
+        .eq("activity_id", task.activity_id)
+        .eq("owner_id", user.id);
+
+      // 2️⃣ Delete the activity itself
+      const { error } = await supabase
+        .from("activities")
+        .delete()
+        .eq("id", task.activity_id)
+        .eq("owner_id", user.id);
+
+      if (error) throw error;
+
+      // 3️⃣ Refresh list
+      loadTasks();
+    } catch (err) {
+      console.error("Delete common task error:", err.message);
+      Alert.alert("Error", "Failed to delete task");
+    }
+  };
+
+
 
   /* ---------------------------------------------------
      UI
@@ -274,12 +353,38 @@ export default function TasksScreen() {
       </View>
 
       {editMode && (
-        <View style={{ flexDirection: "row" }}>
-          <Pressable onPress={() => { setEditingTask(item); setModalVisible(true); }}>
+        <View style={{ flexDirection: "row", alignItems: "center" }}>
+          <Pressable
+            onPress={() => {
+              setEditingTask(item);
+              setModalVisible(true);
+            }}
+            style={{ marginRight: 12 }}
+          >
             <MaterialIcons name="edit" size={24} color="#2563EB" />
+          </Pressable>
+
+          <Pressable
+            onPress={() =>
+              Alert.alert(
+                "Delete Task",
+                `Delete "${item.label}"?`,
+                [
+                  { text: "Cancel", style: "cancel" },
+                  {
+                    text: "Delete",
+                    style: "destructive",
+                    onPress: () => deleteCommonTask(item),
+                  },
+                ]
+              )
+            }
+          >
+            <MaterialIcons name="delete" size={24} color="#DC2626" />
           </Pressable>
         </View>
       )}
+
     </View>
   );
 

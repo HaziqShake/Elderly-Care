@@ -1,4 +1,5 @@
-import "react-native-gesture-handler";
+import { AppState } from "react-native";
+import { ensureTodayInstances } from "./supabase/ensureTodayInstances";
 import React, { useEffect, useState } from "react";
 import { StatusBar } from "expo-status-bar";
 import { NavigationContainer } from "@react-navigation/native";
@@ -61,14 +62,13 @@ export default function App() {
   const [session, setSession] = useState(null);
   const [loading, setLoading] = useState(true);
 
+  // 1️⃣ Load session + listen for auth changes
   useEffect(() => {
-    // Get existing session
     supabase.auth.getSession().then(({ data }) => {
       setSession(data.session);
       setLoading(false);
     });
 
-    // Listen for changes
     const {
       data: { subscription },
     } = supabase.auth.onAuthStateChange((_event, session) => {
@@ -78,7 +78,39 @@ export default function App() {
     return () => subscription.unsubscribe();
   }, []);
 
-  if (loading) return null;
+  // 2️⃣ Ensure tasks when session becomes available
+  useEffect(() => {
+    if (!session || !session.user || !session.user.id) return;
+
+    const timeout = setTimeout(() => {
+      ensureTodayInstances();
+    }, 600); // small delay = stable auth context
+
+    return () => clearTimeout(timeout);
+  }, [session?.user?.id]);
+
+
+  // 3️⃣ Ensure tasks when app comes to foreground / date changes
+  useEffect(() => {
+    if (!session?.user?.id) return;
+
+    const sub = AppState.addEventListener("change", (state) => {
+      if (state === "active") {
+        ensureTodayInstances();
+      }
+    });
+
+    // 🔹 Run once after auth is stable
+    const timeout = setTimeout(() => {
+      ensureTodayInstances();
+    }, 600);
+
+    return () => {
+      sub.remove();
+      clearTimeout(timeout);
+    };
+  }, [session?.user?.id]);
+
 
   return (
     <SafeAreaProvider>

@@ -20,7 +20,7 @@ export default function Avatar({
           width: size,
           height: size,
           borderRadius: size / 2,
-          backgroundColor: "#E5E7EB",
+          backgroundColor: "#0055ffff",
         }}
       />
     );

@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { View, Text, TouchableOpacity, Modal } from "react-native";
+import { View, Text, TouchableOpacity } from "react-native";
 import { MaterialIcons } from "@expo/vector-icons";
 import DateTimePicker from "@react-native-community/datetimepicker";
 import moment from "moment";
@@ -8,14 +8,16 @@ export default function DateNavigator({ date, onChange }) {
   const [showPicker, setShowPicker] = useState(false);
 
   const today = moment().startOf("day");
-  const current = moment(date);
+  const current = moment(date).startOf("day");
+
+  const isToday = current.isSame(today);
 
   const goPrev = () => {
     onChange(current.clone().subtract(1, "day").toDate());
   };
 
   const goNext = () => {
-    if (current.isSame(today)) return;
+    if (isToday) return;
     onChange(current.clone().add(1, "day").toDate());
   };
 
@@ -28,12 +30,12 @@ export default function DateNavigator({ date, onChange }) {
         marginBottom: 12,
       }}
     >
-      {/* Previous */}
+      {/* Previous day */}
       <TouchableOpacity onPress={goPrev} style={{ padding: 6 }}>
         <MaterialIcons name="chevron-left" size={30} color="#2563EB" />
       </TouchableOpacity>
 
-      {/* Date */}
+      {/* Date label / picker */}
       <TouchableOpacity
         onPress={() => setShowPicker(true)}
         style={{
@@ -44,30 +46,34 @@ export default function DateNavigator({ date, onChange }) {
         }}
       >
         <Text style={{ fontWeight: "700", color: "#1E3A8A" }}>
-          {current.isSame(today)
-            ? "Today"
-            : current.format("DD MMM YYYY")}
+          {isToday ? "Today" : current.format("DD MMM YYYY")}
         </Text>
       </TouchableOpacity>
 
-      {/* Next */}
+      {/* Next day (disabled for future) */}
       <TouchableOpacity
         onPress={goNext}
-        disabled={current.isSame(today)}
-        style={{ padding: 6, opacity: current.isSame(today) ? 0.3 : 1 }}
+        disabled={isToday}
+        style={{ padding: 6, opacity: isToday ? 0.3 : 1 }}
       >
         <MaterialIcons name="chevron-right" size={30} color="#2563EB" />
       </TouchableOpacity>
 
-      {/* Calendar Picker */}
+      {/* Calendar picker (future dates blocked) */}
       {showPicker && (
         <DateTimePicker
           value={current.toDate()}
           mode="date"
           display="calendar"
+          maximumDate={today.toDate()} // 🔒 BLOCK FUTURE DATES
           onChange={(e, picked) => {
             setShowPicker(false);
-            if (picked) onChange(picked);
+            if (picked) {
+              const pickedDay = moment(picked).startOf("day");
+              if (!pickedDay.isAfter(today)) {
+                onChange(pickedDay.toDate());
+              }
+            }
           }}
         />
       )}
