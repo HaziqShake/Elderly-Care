@@ -8,8 +8,9 @@ import {
   FlatList,
   TouchableOpacity,
   ActivityIndicator,
-  Alert,
+  Modal,
 } from "react-native";
+import Toast from "react-native-toast-message";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { MaterialIcons } from "@expo/vector-icons";
 import ResidentListItem from "../components/ResidentListItem";
@@ -17,6 +18,9 @@ import ResidentCardModal from "../components/ResidentCardModal";
 import { supabase } from "../supabase/supabaseClient";
 
 export default function HomeScreen({ navigation }) {
+  const [confirmDeleteVisible, setConfirmDeleteVisible] = useState(false);
+  const [residentToDelete, setResidentToDelete] = useState(null);
+
   const [editMode, setEditMode] = useState(false);
   const [residents, setResidents] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -65,31 +69,55 @@ export default function HomeScreen({ navigation }) {
     }
   };
 
-  const handleDeleteResident = (resident) => {
-    Alert.alert(
-      "Delete Resident",
-      `Are you sure you want to delete ${resident.name}?`,
-      [
-        { text: "Cancel", style: "cancel" },
-        {
-          text: "Delete",
-          style: "destructive",
-          onPress: async () => {
-            const { error } = await supabase
-              .from("residents")
-              .delete()
-              .eq("id", resident.id);
+  const handleDeleteResident = async (resident) => {
+    const { error } = await supabase
+      .from("residents")
+      .delete()
+      .eq("id", resident.id);
 
-            if (!error) {
-              setResidents((prev) =>
-                prev.filter((r) => r.id !== resident.id)
-              );
-            }
-          },
-        },
-      ]
-    );
+    if (error) {
+      console.error("Delete error:", error.message);
+      Toast.show({
+        type: "error",
+        text1: "Failed to delete resident",
+      });
+    } else {
+      setResidents((prev) =>
+        prev.filter((r) => r.id !== resident.id)
+      );
+      Toast.show({
+        type: "success",
+        text1: "Resident deleted",
+      });
+    }
   };
+  const confirmDeleteResident = async () => {
+    if (!residentToDelete) return;
+
+    const { error } = await supabase
+      .from("residents")
+      .delete()
+      .eq("id", residentToDelete.id);
+
+    if (error) {
+      Toast.show({
+        type: "error",
+        text1: "Failed to delete resident",
+      });
+    } else {
+      setResidents((prev) =>
+        prev.filter((r) => r.id !== residentToDelete.id)
+      );
+      Toast.show({
+        type: "success",
+        text1: "Resident deleted",
+      });
+    }
+
+    setConfirmDeleteVisible(false);
+    setResidentToDelete(null);
+  };
+
 
   const filtered = residents.filter((r) =>
     r.name.toLowerCase().includes(search.toLowerCase())
@@ -160,11 +188,17 @@ export default function HomeScreen({ navigation }) {
             {editMode && (
               <TouchableOpacity
                 style={styles.deleteBadge}
-                onPress={() => handleDeleteResident(item)}
+                onPress={() => {
+                  setResidentToDelete(item);
+                  setConfirmDeleteVisible(true);
+                }}
+
               >
                 <MaterialIcons name="remove" size={18} color="#fff" />
               </TouchableOpacity>
             )}
+
+
           </View>
         )}
 
@@ -200,6 +234,41 @@ export default function HomeScreen({ navigation }) {
 
         />
       )}
+      {/* DELETE CONFIRMATION MODAL */}
+      <Modal
+        visible={confirmDeleteVisible}
+        transparent
+        animationType="fade"
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.confirmCard}>
+            <Text style={styles.confirmTitle}>Delete Resident</Text>
+            <Text style={styles.confirmText}>
+              Are you sure you want to delete{" "}
+              {residentToDelete?.name}?
+            </Text>
+
+            <View style={styles.modalButtonsRow}>
+              <TouchableOpacity
+                style={styles.cancelBtn}
+                onPress={() => {
+                  setConfirmDeleteVisible(false);
+                  setResidentToDelete(null);
+                }}
+              >
+                <Text style={styles.cancelBtnText}>Cancel</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={styles.deleteBtn}
+                onPress={confirmDeleteResident}
+              >
+                <Text style={styles.deleteBtnText}>Delete</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -277,6 +346,55 @@ const styles = StyleSheet.create({
     flex: 1,
     position: "relative",
     alignItems: "center",
+  },
+  confirmCard: {
+    backgroundColor: "#fff",
+    padding: 20,
+    borderRadius: 12,
+    width: "85%",
+  },
+
+  confirmTitle: {
+    fontSize: 18,
+    fontWeight: "600",
+    marginBottom: 8,
+    textAlign: "center",
+  },
+
+  confirmText: {
+    fontSize: 14,
+    color: "#374151",
+    textAlign: "center",
+    marginBottom: 16,
+  },
+
+  deleteBtn: {
+    flex: 1,
+    backgroundColor: "#DC2626",
+    paddingVertical: 12,
+    borderRadius: 8,
+    alignItems: "center",
+    marginLeft: 6,
+  },
+
+
+  deleteBtnText: {
+    color: "#FFFFFF",
+    fontWeight: "600",
+  },
+  modalButtonsRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginTop: 16,
+  },
+  cancelBtn: {
+    flex: 1,
+    backgroundColor: "#E5E7EB",
+    paddingVertical: 12,
+    borderRadius: 8,
+    alignItems: "center",
+    marginRight: 6,
   },
 
 });

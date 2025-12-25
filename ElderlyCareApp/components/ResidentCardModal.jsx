@@ -1,6 +1,6 @@
 // components/ResidentCardModal.jsx
-import * as ImagePicker from "expo-image-picker";
 import DateNavigator from "../components/DateNavigator";
+import * as ImagePicker from "expo-image-picker";
 import React, { useState, useEffect } from "react";
 import {
   View,
@@ -16,11 +16,19 @@ import {
 import { MaterialIcons } from "@expo/vector-icons";
 import { supabase } from "../supabase/supabaseClient";
 import Toast from "react-native-toast-message";
-import DateTimePicker from "@react-native-community/datetimepicker";
 import moment from "moment";
 
 
 export default function ResidentCardModal({ resident, onClose, onUpdateResident }) {
+  // Custom time picker (shared)
+  const [showTimePickerModal, setShowTimePickerModal] = useState(false);
+  const [timeContext, setTimeContext] = useState(null);
+  // "task" | "vital"
+
+  const [hour, setHour] = useState("9");
+  const [minute, setMinute] = useState("00");
+  const [ampm, setAmpm] = useState("AM");
+
   // resident info edit mode (global for resident fields only)
   const WEEKDAYS = [
     { label: "S", value: 0 },
@@ -45,7 +53,7 @@ export default function ResidentCardModal({ resident, onClose, onUpdateResident 
   const [editingTask, setEditingTask] = useState(null); // null = adding new task
   const [taskLabel, setTaskLabel] = useState("");
   const [taskTime, setTaskTime] = useState(new Date());
-  const [showTaskTimePicker, setShowTaskTimePicker] = useState(false);
+
   const [editTasks, setEditTasks] = useState(false);
 
 
@@ -73,7 +81,6 @@ export default function ResidentCardModal({ resident, onClose, onUpdateResident 
     insulin: "",
   });
   const [vitalTime, setVitalTime] = useState(new Date());
-  const [showVitalTimePicker, setShowVitalTimePicker] = useState(false);
 
 
   // resident form
@@ -179,6 +186,27 @@ export default function ResidentCardModal({ resident, onClose, onUpdateResident 
       });
     }
   };
+  const applyPickedTime = () => {
+    let h = parseInt(hour, 10);
+    if (ampm === "PM" && h !== 12) h += 12;
+    if (ampm === "AM" && h === 12) h = 0;
+
+    const date = new Date();
+    date.setHours(h);
+    date.setMinutes(parseInt(minute, 10));
+    date.setSeconds(0);
+
+    if (timeContext === "task") {
+      setTaskTime(date);
+    }
+    if (timeContext === "vital") {
+      setVitalTime(date);
+    }
+
+    setShowTimePickerModal(false);
+    setTimeContext(null);
+  };
+
 
 
 
@@ -863,23 +891,27 @@ export default function ResidentCardModal({ resident, onClose, onUpdateResident 
 
                   <Text style={styles.modalLabel}>Time</Text>
 
-                  <TouchableOpacity style={styles.timeButton} onPress={() => setShowTaskTimePicker(true)}>
+
+
+                  <TouchableOpacity
+                    style={styles.timeButton}
+                    onPress={() => {
+                      const d = taskTime || new Date();
+                      let h = d.getHours();
+                      setAmpm(h >= 12 ? "PM" : "AM");
+                      h = h % 12 || 12;
+                      setHour(String(h));
+                      setMinute(String(d.getMinutes()).padStart(2, "0"));
+                      setTimeContext("task");
+                      setShowTimePickerModal(true);
+                    }}
+                  >
                     <MaterialIcons name="schedule" size={22} color="#2563EB" />
-                    <Text style={styles.timeButtonText}>{moment(taskTime).format("h:mm A")}</Text>
+                    <Text style={styles.timeButtonText}>
+                      {moment(taskTime).format("h:mm A")}
+                    </Text>
                   </TouchableOpacity>
 
-                  {showTaskTimePicker && (
-                    <DateTimePicker
-                      value={taskTime}
-                      mode="time"
-                      display="spinner"
-                      is24Hour={false}
-                      onChange={(e, picked) => {
-                        if (picked) setTaskTime(picked);
-                        setShowTaskTimePicker(false);
-                      }}
-                    />
-                  )}
                   <Text style={styles.modalLabel}>Repeat on</Text>
 
                   <View style={styles.weekRow}>
@@ -1074,9 +1106,19 @@ export default function ResidentCardModal({ resident, onClose, onUpdateResident 
                     <Text style={styles.modalTitle}>Add Vital Reading</Text>
                     <Text style={styles.modalLabel}>Time</Text>
 
+
                     <TouchableOpacity
                       style={styles.timeButton}
-                      onPress={() => setShowVitalTimePicker(true)}
+                      onPress={() => {
+                        const d = vitalTime || new Date();
+                        let h = d.getHours();
+                        setAmpm(h >= 12 ? "PM" : "AM");
+                        h = h % 12 || 12;
+                        setHour(String(h));
+                        setMinute(String(d.getMinutes()).padStart(2, "0"));
+                        setTimeContext("vital");
+                        setShowTimePickerModal(true);
+                      }}
                     >
                       <MaterialIcons name="schedule" size={22} color="#2563EB" />
                       <Text style={styles.timeButtonText}>
@@ -1084,18 +1126,6 @@ export default function ResidentCardModal({ resident, onClose, onUpdateResident 
                       </Text>
                     </TouchableOpacity>
 
-                    {showVitalTimePicker && (
-                      <DateTimePicker
-                        value={vitalTime}
-                        mode="time"
-                        display="spinner"
-                        is24Hour={false}
-                        onChange={(e, picked) => {
-                          if (picked) setVitalTime(picked);
-                          setShowVitalTimePicker(false);
-                        }}
-                      />
-                    )}
 
 
                     {["bp", "temp", "pulse", "resp", "spo2", "sugar", "insulin"].map((field) => (
@@ -1173,7 +1203,138 @@ export default function ResidentCardModal({ resident, onClose, onUpdateResident 
                 </View>
               </Modal>
             )}
+            {/* 🔽 ADD CUSTOM TIME PICKER MODAL HERE */}
+            <Modal
+              visible={showTimePickerModal}
+              transparent
+              animationType="fade"
+              presentationStyle="overFullScreen"
+            >
+
+              <View style={styles.modalOverlay}>
+                <View style={styles.modalCard}>
+                  <Text style={styles.modalTitle}>Select Time</Text>
+                  <Text style={styles.timePreview}>
+                    {hour}:{minute} {ampm}
+                  </Text>
+
+                  <View
+                    style={{
+                      flexDirection: "row",
+                      justifyContent: "center",
+                      maxHeight: 220,
+                    }}
+                  >
+                    {/* Hour */}
+                    <View style={styles.timePickerColumn}>
+                      <ScrollView>
+                        {Array.from({ length: 12 }, (_, i) => i + 1).map((h) => {
+                          const selected = hour === String(h);
+                          return (
+                            <TouchableOpacity
+                              key={h}
+                              onPress={() => setHour(String(h))}
+                              style={[
+                                styles.timeOption,
+                                selected && styles.timeOptionSelected,
+                              ]}
+                            >
+                              <Text
+                                style={[
+                                  styles.timeOptionText,
+                                  selected && styles.timeOptionTextSelected,
+                                ]}
+                              >
+                                {h}
+                              </Text>
+                            </TouchableOpacity>
+                          );
+                        })}
+                      </ScrollView>
+                    </View>
+
+
+
+                    {/* Minute */}
+                    <View style={styles.timePickerColumn}>
+                      <ScrollView>
+                        {Array.from({ length: 60 }, (_, i) =>
+                          String(i).padStart(2, "0")
+                        ).map((m) => {
+                          const selected = minute === m;
+                          return (
+                            <TouchableOpacity
+                              key={m}
+                              onPress={() => setMinute(m)}
+                              style={[
+                                styles.timeOption,
+                                selected && styles.timeOptionSelected,
+                              ]}
+                            >
+                              <Text
+                                style={[
+                                  styles.timeOptionText,
+                                  selected && styles.timeOptionTextSelected,
+                                ]}
+                              >
+                                {m}
+                              </Text>
+                            </TouchableOpacity>
+                          );
+                        })}
+                      </ScrollView>
+                    </View>
+
+
+                    {/* AM / PM */}
+                    <View style={styles.timePickerColumn}>
+                      {["AM", "PM"].map((p) => {
+                        const selected = ampm === p;
+                        return (
+                          <TouchableOpacity
+                            key={p}
+                            onPress={() => setAmpm(p)}
+                            style={[
+                              styles.timeOption,
+                              selected && styles.timeOptionSelected,
+                            ]}
+                          >
+                            <Text
+                              style={[
+                                styles.timeOptionText,
+                                selected && styles.timeOptionTextSelected,
+                              ]}
+                            >
+                              {p}
+                            </Text>
+                          </TouchableOpacity>
+                        );
+                      })}
+                    </View>
+
+                  </View>
+
+                  <View style={styles.modalButtonsRow}>
+                    <TouchableOpacity
+                      style={styles.cancelBtn}
+                      onPress={() => setShowTimePickerModal(false)}
+                    >
+                      <Text style={styles.cancelBtnText}>Cancel</Text>
+                    </TouchableOpacity>
+
+                    <TouchableOpacity
+                      style={styles.saveBtn}
+                      onPress={applyPickedTime}
+                    >
+                      <Text style={styles.saveBtnText}>Done</Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              </View>
+            </Modal>
+            {/* 🔼 END CUSTOM TIME PICKER MODAL */}
           </ScrollView>
+
         </View>
       </View >
     </Modal >
@@ -1389,17 +1550,24 @@ const styles = StyleSheet.create({
     marginTop: 10,
   },
   modalOverlay: {
-    flex: 1,
-    backgroundColor: "rgba(0,0,0,0.3)",
+    position: "absolute",
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: "rgba(0,0,0,0.4)",
     justifyContent: "center",
     alignItems: "center",
   },
+
   modalCard: {
     backgroundColor: "white",
     width: "85%",
+    maxHeight: "70%",
     padding: 20,
     borderRadius: 12,
   },
+
   modalTitle: {
     fontSize: 18,
     fontWeight: "700",
@@ -1578,4 +1746,40 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     padding: 4,
   },
+  timePickerColumn: {
+    width: 80,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: "#E5E7EB",
+    marginHorizontal: 6,
+  },
+
+  timeOption: {
+    paddingVertical: 10,
+    alignItems: "center",
+  },
+
+  timeOptionSelected: {
+    backgroundColor: "#2563EB",
+    borderRadius: 6,
+  },
+
+  timeOptionText: {
+    fontSize: 16,
+    color: "#374151",
+  },
+
+  timeOptionTextSelected: {
+    color: "#FFFFFF",
+    fontWeight: "600",
+  },
+
+  timePreview: {
+    textAlign: "center",
+    fontSize: 18,
+    fontWeight: "600",
+    marginBottom: 12,
+    color: "#111827",
+  },
+
 });

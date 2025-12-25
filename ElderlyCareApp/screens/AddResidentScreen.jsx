@@ -1,4 +1,5 @@
 // screens/AddResidentScreen.jsx
+import Toast from "react-native-toast-message";
 import { SafeAreaView } from "react-native-safe-area-context";
 import React, { useState } from "react";
 import {
@@ -7,7 +8,6 @@ import {
   TextInput,
   TouchableOpacity,
   StyleSheet,
-  Alert,
 } from "react-native";
 import { supabase } from "../supabase/supabaseClient";
 
@@ -31,7 +31,11 @@ export default function AddResidentScreen({ navigation }) {
   const handleSubmit = async () => {
     if (saving) return; // 🔒 prevent double submit
     if (!form.name || !form.bed_number) {
-      Alert.alert("Error", "Name and Bed Number are required");
+      Toast.show({
+        type: "error",
+        text1: "Name and Bed Number are required",
+      });
+
       return;
     }
 
@@ -44,7 +48,11 @@ export default function AddResidentScreen({ navigation }) {
       } = await supabase.auth.getUser();
 
       if (userError || !user) {
-        Alert.alert("Error", "User not authenticated");
+        Toast.show({
+          type: "error",
+          text1: "User not authenticated",
+        });
+
         setSaving(false);
         return;
       }
@@ -68,7 +76,11 @@ export default function AddResidentScreen({ navigation }) {
 
       if (error) {
         console.error("Supabase error:", error.message);
-        Alert.alert("Error", "Failed to add resident");
+        Toast.show({
+          type: "error",
+          text1: "Failed to add resident",
+        });
+
         setSaving(false);
         return;
       }
@@ -83,7 +95,10 @@ export default function AddResidentScreen({ navigation }) {
       setSaving(false);
     } catch (err) {
       console.error("Unexpected error:", err);
-      Alert.alert("Error", "Something went wrong");
+      Toast.show({
+        type: "error",
+        text1: "Something went wrong",
+      });
       setSaving(false);
     }
   };

@@ -5,10 +5,10 @@ import {
   TextInput,
   TouchableOpacity,
   StyleSheet,
-  Alert,
 } from "react-native";
 import { MaterialIcons } from "@expo/vector-icons";
 import { supabase } from "../supabase/supabaseClient";
+import Toast from "react-native-toast-message";
 
 export default function LoginScreen() {
   const [email, setEmail] = useState("");
@@ -20,12 +20,19 @@ export default function LoginScreen() {
 
   const handleAuth = async () => {
     if (!email || !password || (isSignup && !confirmPassword)) {
-      Alert.alert("Missing fields", "Please fill all fields");
+      Toast.show({
+        type: "error",
+        text1: "Please fill all fields",
+      });
+
       return;
     }
 
     if (isSignup && password !== confirmPassword) {
-      Alert.alert("Password mismatch", "Passwords do not match");
+      Toast.show({
+        type: "error",
+        text1: "Passwords do not match",
+      });
       return;
     }
 
@@ -48,7 +55,11 @@ export default function LoginScreen() {
       }
       // ✅ App.js will react via onAuthStateChange
     } catch (e) {
-      Alert.alert("Error", e.message || "Authentication failed");
+      Toast.show({
+        type: "error",
+        text1: e.message || "Authentication failed",
+      });
+
     } finally {
       setLoading(false);
     }

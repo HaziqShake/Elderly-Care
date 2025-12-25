@@ -13,7 +13,6 @@ import {
 } from "react-native";
 import { supabase } from "../supabase/supabaseClient";
 import { SafeAreaView } from "react-native-safe-area-context";
-import DateTimePicker from "@react-native-community/datetimepicker";
 import moment from "moment";
 import { MaterialIcons } from "@expo/vector-icons";
 
@@ -37,19 +36,32 @@ function CommonTaskModal({ visible, editingTask, onClose, onSave }) {
   const [label, setLabel] = useState("");
   const [time, setTime] = useState(new Date());
   const [repeatDays, setRepeatDays] = useState([0, 1, 2, 3, 4, 5, 6]);
-  const [showPicker, setShowPicker] = useState(false);
+
+  // custom time picker state
+  const [showTimePicker, setShowTimePicker] = useState(false);
+  const [hour, setHour] = useState("9");
+  const [minute, setMinute] = useState("00");
+  const [ampm, setAmpm] = useState("AM");
+
 
   useEffect(() => {
-    if (editingTask) {
-      setLabel(editingTask.label);
-      setTime(moment(editingTask.scheduled_time, "HH:mm:ss").toDate());
-      setRepeatDays(editingTask.repeat_days || [0, 1, 2, 3, 4, 5, 6]);
-    } else {
-      setLabel("");
-      setTime(new Date());
-      setRepeatDays([0, 1, 2, 3, 4, 5, 6]);
-    }
+    const d = editingTask
+      ? moment(editingTask.scheduled_time, "HH:mm:ss").toDate()
+      : new Date();
+
+    setLabel(editingTask ? editingTask.label : "");
+    setTime(d);
+    setRepeatDays(
+      editingTask?.repeat_days || [0, 1, 2, 3, 4, 5, 6]
+    );
+
+    let h = d.getHours();
+    setAmpm(h >= 12 ? "PM" : "AM");
+    h = h % 12 || 12;
+    setHour(String(h));
+    setMinute(String(d.getMinutes()).padStart(2, "0"));
   }, [editingTask]);
+
 
   const handleSave = () => {
     onSave({
@@ -78,26 +90,13 @@ function CommonTaskModal({ visible, editingTask, onClose, onSave }) {
           <Text style={styles.modalLabel}>Time</Text>
           <Pressable
             style={styles.timeButton}
-            onPress={() => setShowPicker(true)}
+            onPress={() => setShowTimePicker(true)}
           >
             <MaterialIcons name="schedule" size={22} color="#2563EB" />
             <Text style={styles.timeButtonText}>
-              {moment(time).format("h:mm A")}
+              {hour}:{minute} {ampm}
             </Text>
           </Pressable>
-
-          {showPicker && (
-            <DateTimePicker
-              value={time}
-              mode="time"
-              display="spinner"
-              is24Hour={false}
-              onChange={(e, picked) => {
-                if (picked) setTime(picked);
-                setShowPicker(false);
-              }}
-            />
-          )}
 
           <Text style={styles.modalLabel}>Repeat on</Text>
           <View style={styles.weekRow}>
@@ -140,6 +139,162 @@ function CommonTaskModal({ visible, editingTask, onClose, onSave }) {
               <Text style={styles.saveBtnText}>Save</Text>
             </Pressable>
           </View>
+          {/* 🔽 CUSTOM TIME PICKER MODAL */}
+          {showTimePicker && (
+            <Modal
+              transparent
+              animationType="fade"
+              presentationStyle="overFullScreen"
+            >
+              <View
+                style={[
+                  styles.modalOverlay,
+                  {
+                    position: "absolute",
+                    top: 0,
+                    left: 0,
+                    right: 0,
+                    bottom: 0,
+                  },
+                ]}
+              >
+                <View style={[styles.modalCard, { maxHeight: "70%" }]}>
+                  <Text style={styles.modalTitle}>Select Time</Text>
+
+                  <Text style={{ textAlign: "center", fontSize: 18, marginBottom: 12 }}>
+                    {hour}:{minute} {ampm}
+                  </Text>
+
+                  <View
+                    style={{
+                      flexDirection: "row",
+                      justifyContent: "center",
+                      maxHeight: 220,
+                    }}
+                  >
+                    {/* Hour */}
+                    <View style={{ width: 80 }}>
+                      <FlatList
+                        data={Array.from({ length: 12 }, (_, i) => String(i + 1))}
+                        keyExtractor={(i) => i}
+                        renderItem={({ item }) => {
+                          const selected = hour === item;
+                          return (
+                            <TouchableOpacity
+                              onPress={() => setHour(item)}
+                              style={[
+                                styles.timeOption,
+                                selected && styles.timeOptionSelected,
+                              ]}
+                            >
+                              <Text
+                                style={[
+                                  styles.timeOptionText,
+                                  selected && styles.timeOptionTextSelected,
+                                ]}
+                              >
+                                {item}
+                              </Text>
+                            </TouchableOpacity>
+                          );
+                        }}
+                      />
+                    </View>
+
+
+                    {/* Minute */}
+                    <View style={{ width: 80 }}>
+                      <FlatList
+                        data={Array.from({ length: 60 }, (_, i) =>
+                          String(i).padStart(2, "0")
+                        )}
+                        keyExtractor={(i) => i}
+                        renderItem={({ item }) => {
+                          const selected = minute === item;
+                          return (
+                            <TouchableOpacity
+                              onPress={() => setMinute(item)}
+                              style={[
+                                styles.timeOption,
+                                selected && styles.timeOptionSelected,
+                              ]}
+                            >
+                              <Text
+                                style={[
+                                  styles.timeOptionText,
+                                  selected && styles.timeOptionTextSelected,
+                                ]}
+                              >
+                                {item}
+                              </Text>
+                            </TouchableOpacity>
+                          );
+                        }}
+                      />
+                    </View>
+
+
+                    {/* AM / PM */}
+                    <View style={{ width: 80 }}>
+                      {["AM", "PM"].map((p) => {
+                        const selected = ampm === p;
+                        return (
+                          <TouchableOpacity
+                            key={p}
+                            onPress={() => setAmpm(p)}
+                            style={[
+                              styles.timeOption,
+                              selected && styles.timeOptionSelected,
+                            ]}
+                          >
+                            <Text
+                              style={[
+                                styles.timeOptionText,
+                                selected && styles.timeOptionTextSelected,
+                              ]}
+                            >
+                              {p}
+                            </Text>
+                          </TouchableOpacity>
+                        );
+                      })}
+                    </View>
+
+                  </View>
+
+                  <View style={styles.modalButtonsRow}>
+                    <Pressable
+                      style={styles.cancelBtn}
+                      onPress={() => setShowTimePicker(false)}
+                    >
+                      <Text style={styles.cancelBtnText}>Cancel</Text>
+                    </Pressable>
+
+                    <Pressable
+                      style={styles.saveBtn}
+                      onPress={() => {
+                        let h = parseInt(hour, 10);
+                        if (ampm === "PM" && h !== 12) h += 12;
+                        if (ampm === "AM" && h === 12) h = 0;
+
+                        const d = new Date();
+                        d.setHours(h);
+                        d.setMinutes(parseInt(minute, 10));
+                        d.setSeconds(0);
+
+                        setTime(d);
+                        setShowTimePicker(false);
+                      }}
+                    >
+                      <Text style={styles.saveBtnText}>Done</Text>
+                    </Pressable>
+                  </View>
+                </View>
+              </View>
+            </Modal>
+          )}
+          {/* 🔼 END CUSTOM TIME PICKER MODAL */}
+
         </View>
       </View>
     </Modal>
@@ -489,21 +644,29 @@ const styles = StyleSheet.create({
   },
 
   modalOverlay: {
-    flex: 1,
-    backgroundColor: "rgba(0,0,0,0.3)",
+    position: "absolute",
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: "rgba(0,0,0,0.4)",
     justifyContent: "center",
     alignItems: "center",
   },
+
   modalCard: {
-    backgroundColor: "white",
+    backgroundColor: "#FFFFFF",
     width: "85%",
-    padding: 20,
+    maxHeight: "70%",
     borderRadius: 12,
+    padding: 20,
   },
+
   modalTitle: {
     fontSize: 18,
-    fontWeight: "700",
-    color: "#1E3A8A",
+    fontWeight: "600",
+    textAlign: "center",
+    marginBottom: 10,
   },
   modalLabel: {
     fontSize: 14,
@@ -562,19 +725,22 @@ const styles = StyleSheet.create({
 
   modalButtonsRow: {
     flexDirection: "row",
-    marginTop: 20,
+    justifyContent: "space-between",
+    marginTop: 16,
   },
+
   cancelBtn: {
     flex: 1,
     backgroundColor: "#E5E7EB",
-    padding: 12,
+    paddingVertical: 12,
     borderRadius: 8,
-    marginRight: 10,
+    alignItems: "center",
+    marginRight: 6,
   },
+
   cancelBtnText: {
-    textAlign: "center",
-    fontWeight: "600",
     color: "#374151",
+    fontWeight: "500",
   },
   saveBtn: {
     flex: 1,
@@ -583,8 +749,42 @@ const styles = StyleSheet.create({
     borderRadius: 8,
   },
   saveBtnText: {
+    color: "#FFFFFF",
+    fontWeight: "600",
+  },
+  timePreview: {
     textAlign: "center",
-    fontWeight: "700",
-    color: "white",
+    fontSize: 18,
+    fontWeight: "600",
+    marginBottom: 12,
+    color: "#111827",
+  },
+
+  timePickerColumn: {
+    width: 80,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: "#E5E7EB",
+    marginHorizontal: 6,
+  },
+
+  timeOption: {
+    paddingVertical: 10,
+    alignItems: "center",
+  },
+
+  timeOptionSelected: {
+    backgroundColor: "#2563EB",
+    borderRadius: 6,
+  },
+
+  timeOptionText: {
+    fontSize: 16,
+    color: "#374151",
+  },
+
+  timeOptionTextSelected: {
+    color: "#FFFFFF",
+    fontWeight: "600",
   },
 });
