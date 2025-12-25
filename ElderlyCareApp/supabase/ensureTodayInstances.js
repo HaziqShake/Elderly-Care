@@ -6,13 +6,13 @@ export async function ensureTodayInstances() {
   const todayWeekday = todayDate.getDay(); // 0 = Sunday
   const today = todayDate.toISOString().slice(0, 10);
   const {
-  data: { user },
-  error: userError,
-} = await supabase.auth.getUser();
+    data: { user },
+    error: userError,
+  } = await supabase.auth.getUser();
 
-if (userError || !user) {
-  throw new Error("User not authenticated");
-}
+  if (userError || !user) {
+    throw new Error("User not authenticated");
+  }
 
 
   try {
@@ -25,7 +25,8 @@ if (userError || !user) {
         activity_id,
         scheduled_time,
         activities(default_time, repeat_days)
-      `);
+      `)
+      .eq("owner_id", user.id);
 
     if (raError) throw raError;
 
@@ -34,7 +35,9 @@ if (userError || !user) {
     const { data: todayInstances, error: instError } = await supabase
       .from("daily_task_instances")
       .select("activity_id, resident_id, date")
-      .eq("date", today);
+      .eq("date", today)
+      .eq("owner_id", user.id);
+
 
     if (instError) throw instError;
 
@@ -78,7 +81,9 @@ if (userError || !user) {
     const { data: commonActs, error: commonErr } = await supabase
       .from("activities")
       .select("id, default_time, repeat_days")
-      .eq("type", "common");
+      .eq("type", "common")
+      .eq("owner_id", user.id);
+
 
     if (commonErr) throw commonErr;
 

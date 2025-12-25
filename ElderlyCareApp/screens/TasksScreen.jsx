@@ -176,10 +176,18 @@ export default function TasksScreen() {
       .eq("date", selectedStr)
       .is("resident_id", null)
       .order("scheduled_time", { ascending: true });
+    const weekday = new Date(selectedStr).getDay();
+
+    const filtered = (data || []).filter((t) => {
+      const repeatDays = t.activities?.repeat_days;
+      if (!Array.isArray(repeatDays) || repeatDays.length === 0) return true;
+      return repeatDays.includes(weekday);
+    });
+
 
     if (!error && data) {
       setCommonTasks(
-        data.map((t) => ({
+        filtered.map((t) => ({
           id: t.id,
           activity_id: t.activity_id,
           label: t.activities?.label ?? "",

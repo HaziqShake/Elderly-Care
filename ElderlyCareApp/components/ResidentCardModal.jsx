@@ -193,7 +193,7 @@ export default function ResidentCardModal({ resident, onClose, onUpdateResident 
 
       const { data, error } = await supabase
         .from("daily_task_instances")
-        .select("id, activity_id, status, scheduled_time, activities(label)")
+        .select("id, activity_id, status, scheduled_time, activities(label, repeat_days)")
         .eq("resident_id", resident.id)
         .eq("date", dateStr)
         .order("scheduled_time", { ascending: true });
@@ -206,9 +206,22 @@ export default function ResidentCardModal({ resident, onClose, onUpdateResident 
         label: row.activities?.label || "Unnamed Task",
         status: row.status || "pending",
         scheduled_time: row.scheduled_time || null,
+        repeat_days: row.activities?.repeat_days || [],
         isNew: false,
       }));
-      setTasks(formatted);
+
+      const weekday = selectedDate.getDay();
+
+      const filtered = formatted.filter((t) => {
+        const repeatDays = t.repeat_days;
+        if (!Array.isArray(repeatDays) || repeatDays.length === 0) return true;
+        return repeatDays.includes(weekday);
+      });
+
+      setTasks(filtered);
+      return;
+
+
     } catch (err) {
       console.error("Error fetching daily tasks:", err.message || err);
       Toast.show({ type: "error", text1: "Could not load tasks" });
@@ -437,6 +450,7 @@ export default function ResidentCardModal({ resident, onClose, onUpdateResident 
           label: taskLabel,
           type: "specific",
           default_time: timeSql,
+          repeat_days: repeatDays,
           owner_id: user.id,
         })
         .select()
@@ -504,7 +518,8 @@ export default function ResidentCardModal({ resident, onClose, onUpdateResident 
     // Close modal + reload
     setTaskModalVisible(false);
     setEditingTask(null);
-    loadTasks();
+    fetchTasks();
+
   };
 
   // OPEN MODAL FOR ADD

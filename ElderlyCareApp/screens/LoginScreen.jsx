@@ -7,19 +7,28 @@ import {
   StyleSheet,
   Alert,
 } from "react-native";
+import { MaterialIcons } from "@expo/vector-icons";
 import { supabase } from "../supabase/supabaseClient";
 
 export default function LoginScreen() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [isSignup, setIsSignup] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [isSignup, setIsSignup] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
+  const [confirmPassword, setConfirmPassword] = useState("");
 
   const handleAuth = async () => {
-    if (!email || !password) {
-      Alert.alert("Missing fields", "Enter email and password");
+    if (!email || !password || (isSignup && !confirmPassword)) {
+      Alert.alert("Missing fields", "Please fill all fields");
       return;
     }
+
+    if (isSignup && password !== confirmPassword) {
+      Alert.alert("Password mismatch", "Passwords do not match");
+      return;
+    }
+
 
     setLoading(true);
 
@@ -29,24 +38,17 @@ export default function LoginScreen() {
           email,
           password,
         });
-
         if (error) throw error;
-
-        Alert.alert(
-          "Account created",
-          "You can now log in with your email and password"
-        );
-        setIsSignup(false);
       } else {
         const { error } = await supabase.auth.signInWithPassword({
           email,
           password,
         });
-
         if (error) throw error;
       }
-    } catch (err) {
-      Alert.alert("Error", err.message);
+      // ✅ App.js will react via onAuthStateChange
+    } catch (e) {
+      Alert.alert("Error", e.message || "Authentication failed");
     } finally {
       setLoading(false);
     }
@@ -58,35 +60,84 @@ export default function LoginScreen() {
         {isSignup ? "Create Account" : "Login"}
       </Text>
 
+      {/* Email */}
       <TextInput
         placeholder="Email"
         autoCapitalize="none"
         keyboardType="email-address"
-        style={styles.input}
         value={email}
         onChangeText={setEmail}
-      />
-
-      <TextInput
-        placeholder="Password"
-        secureTextEntry
         style={styles.input}
-        value={password}
-        onChangeText={setPassword}
       />
 
+      {/* Password */}
+      <View style={styles.passwordRow}>
+        <TextInput
+          placeholder="Password"
+          secureTextEntry={!showPassword}
+          value={password}
+          onChangeText={setPassword}
+          style={[styles.input, { flex: 1, marginBottom: 0 }]}
+        />
+        <TouchableOpacity
+          onPress={() => setShowPassword((p) => !p)}
+          style={styles.eyeBtn}
+        >
+          <MaterialIcons
+            name={showPassword ? "visibility-off" : "visibility"}
+            size={22}
+            color="#6B7280"
+          />
+        </TouchableOpacity>
+      </View>
+
+      {/* Confirm Password (Signup only) */}
+      {isSignup && (
+        <View style={styles.passwordRow}>
+          <TextInput
+            placeholder="Confirm Password"
+            secureTextEntry={!showPassword}
+            value={confirmPassword}
+            onChangeText={setConfirmPassword}
+            style={[styles.input, { flex: 1, marginBottom: 0 }]}
+          />
+          <TouchableOpacity
+            onPress={() => setShowPassword((p) => !p)}
+            style={styles.eyeBtn}
+          >
+            <MaterialIcons
+              name={showPassword ? "visibility-off" : "visibility"}
+              size={22}
+              color="#6B7280"
+            />
+          </TouchableOpacity>
+        </View>
+      )}
+
+
+      {/* Submit */}
       <TouchableOpacity
-        style={styles.primaryButton}
+        style={[styles.button, loading && { opacity: 0.6 }]}
         onPress={handleAuth}
         disabled={loading}
       >
-        <Text style={styles.primaryButtonText}>
-          {isSignup ? "Sign Up" : "Login"}
+        <Text style={styles.buttonText}>
+          {loading
+            ? isSignup
+              ? "Creating..."
+              : "Logging in..."
+            : isSignup
+              ? "Create Account"
+              : "Login"}
         </Text>
       </TouchableOpacity>
 
-      <TouchableOpacity onPress={() => setIsSignup(!isSignup)}>
-        <Text style={styles.switchText}>
+      {/* Toggle Login / Signup */}
+      <TouchableOpacity
+        onPress={() => setIsSignup((p) => !p)}
+        style={{ marginTop: 14 }}
+      >
+        <Text style={styles.toggleText}>
           {isSignup
             ? "Already have an account? Login"
             : "New here? Create an account"}
@@ -106,33 +157,43 @@ const styles = StyleSheet.create({
   title: {
     fontSize: 26,
     fontWeight: "700",
-    color: "#2563EB",
-    marginBottom: 24,
+    marginBottom: 20,
     textAlign: "center",
+    color: "#2563EB",
   },
   input: {
-    backgroundColor: "white",
+    backgroundColor: "#fff",
     padding: 14,
     borderRadius: 10,
     marginBottom: 12,
-    fontSize: 16,
+    fontSize: 15,
   },
-  primaryButton: {
+  passwordRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginBottom: 12,
+  },
+  eyeBtn: {
+    position: "absolute",
+    right: 14,
+    padding: 4,
+  },
+  button: {
     backgroundColor: "#2563EB",
     padding: 14,
     borderRadius: 10,
-    marginTop: 10,
+    marginTop: 4,
   },
-  primaryButtonText: {
-    color: "white",
+  buttonText: {
+    color: "#fff",
     fontWeight: "700",
+    textAlign: "center",
     fontSize: 16,
-    textAlign: "center",
   },
-  switchText: {
-    marginTop: 16,
-    textAlign: "center",
+  toggleText: {
     color: "#2563EB",
-    fontWeight: "600",
+    textAlign: "center",
+    fontSize: 14,
+    fontWeight: "500",
   },
 });

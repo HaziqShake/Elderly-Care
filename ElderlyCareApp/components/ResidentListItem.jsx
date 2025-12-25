@@ -1,10 +1,14 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { MaterialIcons } from "@expo/vector-icons";
 import { View, Text, Image, TouchableOpacity, StyleSheet } from "react-native";
 
 export default function ResidentListItem({ resident, onPress, isGrid }) {
   const initial = resident.name?.charAt(0)?.toUpperCase() || "?";
   const [imageError, setImageError] = useState(false);
+  useEffect(() => {
+    setImageError(false);
+  }, [resident.photo_url]);
+
 
 
   return (
@@ -18,6 +22,7 @@ export default function ResidentListItem({ resident, onPress, isGrid }) {
       {/* AVATAR */}
       {resident.photo_url && !imageError ? (
         <Image
+          key={resident.photo_url} // ✅ force refresh when URL changes
           source={{ uri: resident.photo_url }}
           style={[
             styles.avatar,
@@ -29,8 +34,12 @@ export default function ResidentListItem({ resident, onPress, isGrid }) {
         <View
           style={[
             styles.avatar,
-            styles.defaultAvatar,
             isGrid ? styles.avatarGrid : styles.avatarList,
+            {
+              backgroundColor: "#E5E7EB",
+              justifyContent: "center",
+              alignItems: "center",
+            },
           ]}
         >
           <MaterialIcons
@@ -133,10 +142,6 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: "700",
   },
-  defaultAvatar: {
-    backgroundColor: "#E5E7EB",
-    justifyContent: "center",
-    alignItems: "center",
-  },
+
 
 });

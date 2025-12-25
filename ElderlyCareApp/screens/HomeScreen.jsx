@@ -1,3 +1,4 @@
+import { useFocusEffect } from "@react-navigation/native";
 import React, { useState, useEffect } from "react";
 import {
   View,
@@ -25,6 +26,28 @@ export default function HomeScreen({ navigation }) {
   useEffect(() => {
     fetchResidents();
   }, []);
+  useFocusEffect(
+    React.useCallback(() => {
+      if (navigation.getState) {
+        const route = navigation.getState().routes.find(
+          (r) => r.name === "Home"
+        );
+
+        const newResident = route?.params?.newResident;
+
+        if (newResident) {
+          setResidents((prev) => {
+            const exists = prev.some((r) => r.id === newResident.id);
+            return exists ? prev : [newResident, ...prev];
+          });
+
+          // ✅ clear param so it doesn't re-add
+          navigation.setParams({ newResident: undefined });
+        }
+      }
+    }, [])
+  );
+
 
   const fetchResidents = async () => {
     try {
@@ -151,7 +174,13 @@ export default function HomeScreen({ navigation }) {
       {editMode && (
         <TouchableOpacity
           style={styles.fab}
-          onPress={() => navigation.navigate("AddResident")}
+          onPress={() =>
+            navigation.navigate("AddResident", {
+              onAdd: (newResident) => {
+                setResidents((prev) => [newResident, ...prev]);
+              },
+            })
+          }
         >
           <Text style={styles.fabIcon}>+</Text>
         </TouchableOpacity>
@@ -168,6 +197,7 @@ export default function HomeScreen({ navigation }) {
             );
             setSelectedResident(updated);
           }}
+
         />
       )}
     </SafeAreaView>
@@ -244,9 +274,9 @@ const styles = StyleSheet.create({
     fontWeight: "600",
   },
   gridItemWrapper: {
-  flex: 1,
-  position: "relative",
-  alignItems: "center",
-},
+    flex: 1,
+    position: "relative",
+    alignItems: "center",
+  },
 
 });

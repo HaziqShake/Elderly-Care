@@ -1,10 +1,12 @@
-import React, { useEffect, useState } from "react";
+import { useNavigation } from "@react-navigation/native";
+import React, { useEffect, useState} from "react";
 import { View, Text, StyleSheet, TouchableOpacity, Alert } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { MaterialIcons } from "@expo/vector-icons";
 import { supabase } from "../supabase/supabaseClient";
 
 export default function SettingsScreen() {
+  const navigation = useNavigation();
   const [email, setEmail] = useState(null);
 
   useEffect(() => {
@@ -39,7 +41,14 @@ export default function SettingsScreen() {
   return (
     <SafeAreaView style={styles.safe}>
       <View style={styles.container}>
+
         {/* Header */}
+        <TouchableOpacity onPress={() => navigation.goBack()}>
+          <Text style={{ color: "#2563EB", marginBottom: 12, fontSize: 16 }}>
+            ← Back
+          </Text>
+        </TouchableOpacity>
+
         <Text style={styles.title}>Settings</Text>
 
         {/* Profile Card */}

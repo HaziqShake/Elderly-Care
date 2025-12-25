@@ -1,17 +1,16 @@
-import { AppState } from "react-native";
 import { ensureTodayInstances } from "./supabase/ensureTodayInstances";
+import { AppState } from "react-native";
 import React, { useEffect, useState } from "react";
-import { StatusBar } from "expo-status-bar";
+import { Platform } from "react-native";
 import { NavigationContainer } from "@react-navigation/native";
 import { createNativeStackNavigator } from "@react-navigation/native-stack";
 import { createBottomTabNavigator } from "@react-navigation/bottom-tabs";
-import { SafeAreaProvider, useSafeAreaInsets } from "react-native-safe-area-context";
+import { StatusBar } from "expo-status-bar";
 import { MaterialIcons } from "@expo/vector-icons";
 import Toast from "react-native-toast-message";
 
 import { supabase } from "./supabase/supabaseClient";
 
-// Screens
 import LoginScreen from "./screens/LoginScreen";
 import HomeScreen from "./screens/HomeScreen";
 import TasksScreen from "./screens/TasksScreen";
@@ -24,15 +23,12 @@ const Tab = createBottomTabNavigator();
 
 /* -------------------- TABS -------------------- */
 function MainTabs() {
-  const insets = useSafeAreaInsets();
-
   return (
     <Tab.Navigator
       screenOptions={({ route }) => ({
         headerShown: false,
         tabBarIcon: ({ color, size }) => {
-          let icon;
-          if (route.name === "Home") icon = "home";
+          let icon = "home";
           if (route.name === "Tasks") icon = "checklist";
           if (route.name === "Upcoming") icon = "schedule";
           return <MaterialIcons name={icon} size={size} color={color} />;
@@ -40,13 +36,9 @@ function MainTabs() {
         tabBarActiveTintColor: "#fff",
         tabBarInactiveTintColor: "#BFDBFE",
         tabBarStyle: {
-          position: "absolute",
-          left: 16,
-          right: 16,
-          bottom: insets.bottom,
+          backgroundColor: "#2563EB", // 🔵 back to blue
           height: 60,
-          backgroundColor: "#2563EB",
-          elevation: 6,
+          borderTopWidth: 0,
         },
       })}
     >
@@ -57,78 +49,66 @@ function MainTabs() {
   );
 }
 
+
 /* -------------------- APP ROOT -------------------- */
 export default function App() {
   const [session, setSession] = useState(null);
   const [loading, setLoading] = useState(true);
-
-  // 1️⃣ Load session + listen for auth changes
   useEffect(() => {
+  const sub = AppState.addEventListener("change", (state) => {
+    if (state === "active") {
+      ensureTodayInstances();
+    }
+  });
+
+  return () => sub.remove();
+}, []);
+
+
+  useEffect(() => {
+    let mounted = true;
+
+    // Get initial session (WEB + MOBILE)
     supabase.auth.getSession().then(({ data }) => {
+      if (!mounted) return;
       setSession(data.session);
       setLoading(false);
     });
 
+    // Listen to auth changes
     const {
       data: { subscription },
     } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (!mounted) return;
       setSession(session);
+      setLoading(false);
     });
-
-    return () => subscription.unsubscribe();
-  }, []);
-
-  // 2️⃣ Ensure tasks when session becomes available
-  useEffect(() => {
-    if (!session || !session.user || !session.user.id) return;
-
-    const timeout = setTimeout(() => {
-      ensureTodayInstances();
-    }, 600); // small delay = stable auth context
-
-    return () => clearTimeout(timeout);
-  }, [session?.user?.id]);
-
-
-  // 3️⃣ Ensure tasks when app comes to foreground / date changes
-  useEffect(() => {
-    if (!session?.user?.id) return;
-
-    const sub = AppState.addEventListener("change", (state) => {
-      if (state === "active") {
-        ensureTodayInstances();
-      }
-    });
-
-    // 🔹 Run once after auth is stable
-    const timeout = setTimeout(() => {
-      ensureTodayInstances();
-    }, 600);
 
     return () => {
-      sub.remove();
-      clearTimeout(timeout);
+      mounted = false;
+      subscription.unsubscribe();
     };
-  }, [session?.user?.id]);
+  }, []);
 
+  const isLoggedIn = !!session?.user;
+
+  if (loading) return null;
 
   return (
-    <SafeAreaProvider>
-      <NavigationContainer>
-        <StatusBar style="dark" />
-        <Stack.Navigator screenOptions={{ headerShown: false }}>
-          {session ? (
-            <>
-              <Stack.Screen name="MainTabs" component={MainTabs} />
-              <Stack.Screen name="Settings" component={SettingsScreen} />
-              <Stack.Screen name="AddResident" component={AddResidentScreen} />
-            </>
-          ) : (
-            <Stack.Screen name="Login" component={LoginScreen} />
-          )}
-        </Stack.Navigator>
-      </NavigationContainer>
+    <NavigationContainer>
+      <StatusBar style="dark" />
+      <Stack.Navigator screenOptions={{ headerShown: false }}>
+        {isLoggedIn ? (
+          <>
+            <Stack.Screen name="MainTabs" component={MainTabs} />
+            <Stack.Screen name="Settings" component={SettingsScreen} />
+            <Stack.Screen name="AddResident" component={AddResidentScreen} />
+          </>
+        ) : (
+          <Stack.Screen name="Login" component={LoginScreen} />
+        )}
+      </Stack.Navigator>
       <Toast />
-    </SafeAreaProvider>
+    </NavigationContainer>
   );
 }
