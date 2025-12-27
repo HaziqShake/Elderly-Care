@@ -9,8 +9,8 @@ import {
   TextInput,
   StyleSheet,
   TouchableOpacity,
-  Alert,
 } from "react-native";
+import Toast from "react-native-toast-message";
 import { supabase } from "../supabase/supabaseClient";
 import { SafeAreaView } from "react-native-safe-area-context";
 import moment from "moment";
@@ -398,7 +398,7 @@ export default function TasksScreen() {
     } = await supabase.auth.getUser();
 
     if (userError || !user) {
-      Alert.alert("Error", "User not authenticated");
+      Toast.show({ type: "error", text1: "User not authenticated" });
       return;
     }
 
@@ -416,7 +416,7 @@ export default function TasksScreen() {
         .single();
 
       if (actErr) {
-        Alert.alert("Error", actErr.message);
+        Toast.show({ type: "error", text1: actErr.message });
         return;
       }
 
@@ -432,9 +432,10 @@ export default function TasksScreen() {
         });
 
       if (instErr) {
-        Alert.alert("Error", instErr.message);
+        Toast.show({ type: "error", text1: instErr.message });
         return;
       }
+
     } else {
       const { error } = await supabase
         .from("activities")
@@ -447,10 +448,18 @@ export default function TasksScreen() {
         .eq("owner_id", user.id);
 
       if (error) {
-        Alert.alert("Error", error.message);
+        Toast.show({ type: "error", text1: error.message });
         return;
       }
+
+      await supabase
+        .from("daily_task_instances")
+        .update({ scheduled_time: timeSql })
+        .eq("activity_id", editingTask.activity_id)
+        .eq("date", todayStr)
+        .eq("owner_id", user.id);
     }
+
 
     setModalVisible(false);
     setEditingTask(null);
@@ -464,7 +473,7 @@ export default function TasksScreen() {
       } = await supabase.auth.getUser();
 
       if (userError || !user) {
-        Alert.alert("Error", "User not authenticated");
+        Toast.show({ type: "error", text1: "User not authenticated" });
         return;
       }
 
@@ -486,9 +495,11 @@ export default function TasksScreen() {
 
       // 3️⃣ Refresh list
       loadTasks();
+      Toast.show({ type: "success", text1: "Task deleted" });
+
     } catch (err) {
       console.error("Delete common task error:", err.message);
-      Alert.alert("Error", "Failed to delete task");
+      Toast.show({ type: "error", text1: "Failed to delete task" });
     }
   };
 
@@ -527,22 +538,8 @@ export default function TasksScreen() {
             <MaterialIcons name="edit" size={24} color="#2563EB" />
           </Pressable>
 
-          <Pressable
-            onPress={() =>
-              Alert.alert(
-                "Delete Task",
-                `Delete "${item.label}"?`,
-                [
-                  { text: "Cancel", style: "cancel" },
-                  {
-                    text: "Delete",
-                    style: "destructive",
-                    onPress: () => deleteCommonTask(item),
-                  },
-                ]
-              )
-            }
-          >
+          <Pressable onPress={() => deleteCommonTask(item)}>
+
             <MaterialIcons name="delete" size={24} color="#DC2626" />
           </Pressable>
         </View>

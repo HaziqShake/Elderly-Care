@@ -12,6 +12,7 @@ import {
   ScrollView,
   TextInput,
   ActivityIndicator,
+  Pressable,
 } from "react-native";
 import { MaterialIcons } from "@expo/vector-icons";
 import { supabase } from "../supabase/supabaseClient";
@@ -24,7 +25,7 @@ export default function ResidentCardModal({ resident, onClose, onUpdateResident 
   const [showTimePickerModal, setShowTimePickerModal] = useState(false);
   const [timeContext, setTimeContext] = useState(null);
   // "task" | "vital"
-
+  const [ioTime, setIoTime] = useState(null); // Date object or null
   const [hour, setHour] = useState("9");
   const [minute, setMinute] = useState("00");
   const [ampm, setAmpm] = useState("AM");
@@ -58,6 +59,7 @@ export default function ResidentCardModal({ resident, onClose, onUpdateResident 
 
 
   // Intake / Output state
+  const [savingIo, setSavingIo] = useState(false);
   const [ioEntries, setIoEntries] = useState([]);
   const [ioLoading, setIoLoading] = useState(true);
   const [showIoForm, setShowIoForm] = useState(false);
@@ -188,6 +190,7 @@ export default function ResidentCardModal({ resident, onClose, onUpdateResident 
   };
   const applyPickedTime = () => {
     let h = parseInt(hour, 10);
+
     if (ampm === "PM" && h !== 12) h += 12;
     if (ampm === "AM" && h === 12) h = 0;
 
@@ -199,8 +202,14 @@ export default function ResidentCardModal({ resident, onClose, onUpdateResident 
     if (timeContext === "task") {
       setTaskTime(date);
     }
+
     if (timeContext === "vital") {
       setVitalTime(date);
+      setShowVitalsForm(true); 
+    }
+
+    if (timeContext === "io") {
+      setIoTime(date); 
     }
 
     setShowTimePickerModal(false);
@@ -409,6 +418,9 @@ export default function ResidentCardModal({ resident, onClose, onUpdateResident 
   /* ---------- Intake/Output handlers ---------- */
 
   const handleSaveIoEntry = async () => {
+    if (savingIo) return;
+    setSavingIo(true);
+
     try {
       const {
         data: { session },
@@ -417,32 +429,51 @@ export default function ResidentCardModal({ resident, onClose, onUpdateResident 
 
       if (sessionError || !session || !session.user) {
         Toast.show({ type: "error", text1: "User not authenticated" });
+        setSavingIo(false); // 🔑 FIX
         return;
       }
 
-      const newEntry = {
-        id: Date.now().toString(),
-        resident_id: resident.id,
-        time: new Date().toTimeString().slice(0, 5),
-        intake_ml: newIo.intake_ml || null,
-        urine_ml: newIo.urine_ml || null,
-        stool: newIo.stool || null,
-        date: new Date().toISOString().slice(0, 10),
-      };
+      const stoolDbValue =
+        newIo.stool === "pass"
+          ? "Pass"
+          : newIo.stool === "not_pass"
+            ? "Not Pass"
+            : null;
 
-      // 1️⃣ Instant UI update
-      setIoEntries((prev) => [newEntry, ...prev]);
 
-      // 2️⃣ Backend sync
-      const { error } = await supabase.from("intake_output").insert({
-        resident_id: resident.id,
-        intake_ml: newIo.intake_ml ? parseInt(newIo.intake_ml) : null,
-        urine_ml: newIo.urine_ml ? parseInt(newIo.urine_ml) : null,
-        stool: newIo.stool || null,
-        owner_id: session.user.id,
-      });
+
+      if (!stoolDbValue) {
+        Toast.show({ type: "error", text1: "Please select Pass or Not Pass" });
+        setSavingIo(false);
+        return;
+      }
+      const now = ioTime ? moment(ioTime) : moment();
+
+      const { data, error } = await supabase
+        .from("intake_output")
+        .insert({
+          resident_id: resident.id,
+          date: now.format("YYYY-MM-DD"),
+          time: now.format("HH:mm:ss"),
+          intake_ml: newIo.intake_ml ? parseInt(newIo.intake_ml) : null,
+          urine_ml: newIo.urine_ml ? parseInt(newIo.urine_ml) : null,
+          stool: stoolDbValue,
+          owner_id: session.user.id,
+        })
+        .select()
+        .single();
+
 
       if (error) throw error;
+
+      // ✅ UPDATE UI ONLY AFTER SUCCESS
+      setIoEntries((prev) => [
+        {
+          ...data,
+          time: data.time?.slice(0, 5),
+        },
+        ...prev,
+      ]);
 
       setNewIo({ intake_ml: "", urine_ml: "", stool: "" });
       setShowIoForm(false);
@@ -450,8 +481,11 @@ export default function ResidentCardModal({ resident, onClose, onUpdateResident 
     } catch (err) {
       console.error("Error inserting I/O:", err.message || err);
       Toast.show({ type: "error", text1: "I/O save failed" });
+    } finally {
+      setSavingIo(false);
     }
   };
+
 
   /* --------------------------------------------------
    SPECIFIC TASK ADD/EDIT MODAL
@@ -970,11 +1004,40 @@ export default function ResidentCardModal({ resident, onClose, onUpdateResident 
                 <Text style={{ color: "#6B7280" }}>No entries added today.</Text>
               ) : (
                 ioEntries.map((item) => (
-                  <View key={item.id} style={styles.ioRow}>
-                    <Text style={styles.ioText}>🕒 {item.time?.slice(0, 5) ?? "—"}</Text>
-                    <Text style={styles.ioText}>🥤 Intake: {item.intake_ml ?? 0} ml</Text>
-                    <Text style={styles.ioText}>💧 Urine: {item.urine_ml ?? 0} ml</Text>
-                    <Text style={styles.ioText}>🚽 Stool: {item.stool ?? "—"}</Text>
+                  <View key={item.id} style={styles.ioCard}>
+                    <Text style={styles.ioTime}>
+                      🕒 {item.time?.slice(0, 5) ?? "—"}
+                    </Text>
+
+                    <View style={styles.ioGrid}>
+                      <Text style={styles.ioLabel}>Intake</Text>
+                      <Text style={styles.ioValue}>
+                        {item.intake_ml ?? 0} ml
+                      </Text>
+
+                      <Text style={styles.ioLabel}>Urine</Text>
+                      <Text style={styles.ioValue}>
+                        {item.urine_ml ?? 0} ml
+                      </Text>
+
+                      <Text style={styles.ioLabel}>Stool</Text>
+                      <Text
+                        style={[
+                          styles.ioValue,
+                          item.stool === "Pass"
+                            ? { color: "#16A34A" }
+                            : item.stool === "Not Pass"
+                              ? { color: "#DC2626" }
+                              : {},
+                        ]}
+                      >
+                        {item.stool === "Pass"
+                          ? "Pass"
+                          : item.stool === "Not Pass"
+                            ? "Not Pass"
+                            : "—"}
+                      </Text>
+                    </View>
                   </View>
                 ))
               )}
@@ -984,9 +1047,10 @@ export default function ResidentCardModal({ resident, onClose, onUpdateResident 
                 disabled={!isToday}
                 onPress={() => setShowIoForm(true)}
               >
-                <Text style={styles.addButtonText}>+ Add Intake/Output Entry</Text>
+                <Text style={styles.addButtonText}>
+                  + Add Intake/Output Entry
+                </Text>
               </TouchableOpacity>
-
             </View>
 
             {/* Vitals (separate) */}
@@ -1001,6 +1065,8 @@ export default function ResidentCardModal({ resident, onClose, onUpdateResident 
 
                 vitals.map((v) => (
                   <View key={v.id} style={styles.vitalsCard}>
+                    <View style={{ height: 3, backgroundColor: "#2563EB", borderRadius: 4, marginBottom: 6 }} />
+
                     {/* Time */}
                     <Text style={styles.vitalsTime}>
                       🕒 {v.time ? moment(v.time, "HH:mm:ss").format("h:mm A") : "—"}
@@ -1008,27 +1074,28 @@ export default function ResidentCardModal({ resident, onClose, onUpdateResident 
                     </Text>
 
                     {/* Row 1 */}
-                    <View style={styles.vitalsRow}>
-                      <Text style={styles.vitalsItem}><Text style={styles.vitalsLabel}>BP:</Text> {v.bp || "—"}</Text>
-                      <Text style={styles.vitalsItem}><Text style={styles.vitalsLabel}>Temp:</Text> {v.temp || "—"}</Text>
-                    </View>
+                    <View style={styles.vitalsGrid}>
+                      <Text style={styles.vitalLabel}>BP</Text>
+                      <Text style={styles.vitalValue}>{v.bp || "—"}</Text>
 
-                    {/* Row 2 */}
-                    <View style={styles.vitalsRow}>
-                      <Text style={styles.vitalsItem}><Text style={styles.vitalsLabel}>Pulse:</Text> {v.pulse || "—"}</Text>
-                      <Text style={styles.vitalsItem}><Text style={styles.vitalsLabel}>Resp:</Text> {v.resp || "—"}</Text>
-                    </View>
+                      <Text style={styles.vitalLabel}>Temperature</Text>
+                      <Text style={styles.vitalValue}>{v.temp || "—"}</Text>
 
-                    {/* Row 3 */}
-                    <View style={styles.vitalsRow}>
-                      <Text style={styles.vitalsItem}><Text style={styles.vitalsLabel}>SPO₂:</Text> {v.spo2 || "—"}</Text>
-                      <Text style={styles.vitalsItem}><Text style={styles.vitalsLabel}>Sugar:</Text> {v.sugar || "—"}</Text>
-                    </View>
+                      <Text style={styles.vitalLabel}>Pulse</Text>
+                      <Text style={styles.vitalValue}>{v.pulse || "—"}</Text>
 
-                    {/* Row 4 (single column) */}
-                    <Text style={styles.vitalsSingle}>
-                      <Text style={styles.vitalsLabel}>Insulin:</Text> {v.insulin || "—"}
-                    </Text>
+                      <Text style={styles.vitalLabel}>Respiration</Text>
+                      <Text style={styles.vitalValue}>{v.resp || "—"}</Text>
+
+                      <Text style={styles.vitalLabel}>SpO₂</Text>
+                      <Text style={styles.vitalValue}>{v.spo2 || "—"}</Text>
+
+                      <Text style={styles.vitalLabel}>Sugar</Text>
+                      <Text style={styles.vitalValue}>{v.sugar || "—"}</Text>
+
+                      <Text style={styles.vitalLabel}>Insulin</Text>
+                      <Text style={styles.vitalValue}>{v.insulin || "—"}</Text>
+                    </View>
                   </View>
                 ))
               )}
@@ -1071,16 +1138,64 @@ export default function ResidentCardModal({ resident, onClose, onUpdateResident 
                       onChangeText={(t) => setNewIo({ ...newIo, urine_ml: t })}
                     />
 
-                    <TextInput
-                      style={styles.input}
-                      placeholder="Stool (Pass / Not Pass)"
-                      value={newIo.stool}
-                      onChangeText={(t) => setNewIo({ ...newIo, stool: t })}
-                    />
+                    <Text style={styles.modalLabel}>Stool</Text>
 
+                    <View style={{ flexDirection: "row", marginTop: 6 }}>
+                      {["pass", "not_pass"].map((v) => {
+                        const selected = newIo.stool === v;
+                        return (
+                          <TouchableOpacity
+                            key={v}
+                            onPress={() => setNewIo({ ...newIo, stool: v })}
+                            style={[
+                              styles.choiceBtn,
+                              selected && styles.choiceBtnActive,
+                            ]}
+                          >
+                            <Text
+                              style={[
+                                styles.choiceBtnText,
+                                selected && styles.choiceBtnTextActive,
+                              ]}
+                            >
+                              {v === "pass" ? "Pass" : "Not Pass"}
+                            </Text>
+                          </TouchableOpacity>
+                        );
+                      })}
+                    </View>
+
+
+                    {/* Optional Time Picker */}
+                    <Text style={styles.modalLabel}>Time</Text>
+
+                    <Pressable
+                      style={styles.timeButton}
+                      onPress={() => {
+                        const d = ioTime || new Date();
+                        let h = d.getHours();
+                        setAmpm(h >= 12 ? "PM" : "AM");
+                        h = h % 12 || 12;
+                        setHour(String(h));
+                        setMinute(String(d.getMinutes()).padStart(2, "0"));
+                        setTimeContext("io");
+                        setShowTimePickerModal(true);
+                      }}
+                    >
+                      <MaterialIcons name="schedule" size={22} color="#2563EB" />
+                      <Text style={styles.timeButtonText}>
+                        {ioTime ? moment(ioTime).format("h:mm A") : "Use current time"}
+                      </Text>
+                    </Pressable>
+
+                    {/* Save / Cancel buttons */}
                     <View style={{ flexDirection: "row", justifyContent: "space-between", marginTop: 10 }}>
                       <TouchableOpacity
-                        style={[styles.saveBtn, { flex: 1, marginRight: 5 }]}
+                        style={[
+                          styles.saveBtn,
+                          { flex: 1, marginRight: 5, opacity: savingIo ? 0.6 : 1 },
+                        ]}
+                        disabled={savingIo}
                         onPress={handleSaveIoEntry}
                       >
                         <Text style={styles.saveText}>Save</Text>
@@ -1088,11 +1203,15 @@ export default function ResidentCardModal({ resident, onClose, onUpdateResident 
 
                       <TouchableOpacity
                         style={[styles.cancelBtn, { flex: 1, marginLeft: 5 }]}
-                        onPress={() => setShowIoForm(false)}
+                        onPress={() => {
+                          setShowIoForm(false);
+                          setIoTime(null); // reset optional time
+                        }}
                       >
                         <Text style={styles.cancelText}>Cancel</Text>
                       </TouchableOpacity>
                     </View>
+
                   </View>
                 </View>
               </Modal>
@@ -1110,15 +1229,19 @@ export default function ResidentCardModal({ resident, onClose, onUpdateResident 
                     <TouchableOpacity
                       style={styles.timeButton}
                       onPress={() => {
+                        setShowVitalsForm(false); // 🔑 IMPORTANT
+
                         const d = vitalTime || new Date();
                         let h = d.getHours();
                         setAmpm(h >= 12 ? "PM" : "AM");
                         h = h % 12 || 12;
                         setHour(String(h));
                         setMinute(String(d.getMinutes()).padStart(2, "0"));
+
                         setTimeContext("vital");
                         setShowTimePickerModal(true);
                       }}
+
                     >
                       <MaterialIcons name="schedule" size={22} color="#2563EB" />
                       <Text style={styles.timeButtonText}>
@@ -1133,9 +1256,13 @@ export default function ResidentCardModal({ resident, onClose, onUpdateResident 
                         key={field}
                         placeholder={field.toUpperCase()}
                         style={styles.input}
+                        keyboardType="numeric"   // 🔑 ADD THIS
                         value={vitalForm[field]}
-                        onChangeText={(t) => setVitalForm((prev) => ({ ...prev, [field]: t }))}
+                        onChangeText={(t) =>
+                          setVitalForm((prev) => ({ ...prev, [field]: t }))
+                        }
                       />
+
                     ))}
 
                     <View style={styles.formRow}>
@@ -1780,6 +1907,74 @@ const styles = StyleSheet.create({
     fontWeight: "600",
     marginBottom: 12,
     color: "#111827",
+  },
+  choiceBtn: {
+    flex: 1,
+    paddingVertical: 10,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: "#CBD5E1",
+    alignItems: "center",
+    marginRight: 6,
+  },
+
+  choiceBtnActive: {
+    backgroundColor: "#2563EB",
+    borderColor: "#2563EB",
+  },
+
+  choiceBtnText: {
+    fontWeight: "600",
+    color: "#374151",
+  },
+
+  choiceBtnTextActive: {
+    color: "#fff",
+  },
+
+  ioTime: {
+    fontWeight: "700",
+    color: "#1E3A8A",
+    marginBottom: 6,
+  },
+
+  ioGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    justifyContent: "space-between",
+  },
+
+  ioLabel: {
+    width: "48%",
+    fontSize: 12,
+    color: "#6B7280",
+  },
+
+  ioValue: {
+    width: "48%",
+    fontSize: 14,
+    fontWeight: "600",
+    color: "#111827",
+    marginBottom: 6,
+  },
+  vitalsGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+  },
+
+  vitalLabel: {
+    width: "45%",
+    fontSize: 13,
+    color: "#6B7280",
+    marginBottom: 6,
+  },
+
+  vitalValue: {
+    width: "55%",
+    fontSize: 14,
+    fontWeight: "600",
+    color: "#111827",
+    marginBottom: 6,
   },
 
 });
