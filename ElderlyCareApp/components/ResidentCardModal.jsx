@@ -63,6 +63,8 @@ export default function ResidentCardModal({ resident, onClose, onUpdateResident 
   const [ioEntries, setIoEntries] = useState([]);
   const [ioLoading, setIoLoading] = useState(true);
   const [showIoForm, setShowIoForm] = useState(false);
+  const [editingIo, setEditingIo] = useState(null);
+  const [confirmDeleteIo, setConfirmDeleteIo] = useState(null);
   const [newIo, setNewIo] = useState({
     intake_ml: "",
     urine_ml: "",
@@ -83,6 +85,9 @@ export default function ResidentCardModal({ resident, onClose, onUpdateResident 
     insulin: "",
   });
   const [vitalTime, setVitalTime] = useState(new Date());
+  const [editingVital, setEditingVital] = useState(null);
+  const [confirmDeleteVital, setConfirmDeleteVital] = useState(null);
+
 
 
   // resident form
@@ -205,12 +210,14 @@ export default function ResidentCardModal({ resident, onClose, onUpdateResident 
 
     if (timeContext === "vital") {
       setVitalTime(date);
-      setShowVitalsForm(true); 
+      setShowVitalsForm(true);
     }
 
     if (timeContext === "io") {
-      setIoTime(date); 
+      setIoTime(date);
+      setShowIoForm(true);
     }
+
 
     setShowTimePickerModal(false);
     setTimeContext(null);
@@ -429,7 +436,7 @@ export default function ResidentCardModal({ resident, onClose, onUpdateResident 
 
       if (sessionError || !session || !session.user) {
         Toast.show({ type: "error", text1: "User not authenticated" });
-        setSavingIo(false); // 🔑 FIX
+        setSavingIo(false);
         return;
       }
 
@@ -440,52 +447,70 @@ export default function ResidentCardModal({ resident, onClose, onUpdateResident 
             ? "Not Pass"
             : null;
 
-
-
       if (!stoolDbValue) {
         Toast.show({ type: "error", text1: "Please select Pass or Not Pass" });
         setSavingIo(false);
         return;
       }
+
       const now = ioTime ? moment(ioTime) : moment();
 
-      const { data, error } = await supabase
-        .from("intake_output")
-        .insert({
-          resident_id: resident.id,
-          date: now.format("YYYY-MM-DD"),
-          time: now.format("HH:mm:ss"),
-          intake_ml: newIo.intake_ml ? parseInt(newIo.intake_ml) : null,
-          urine_ml: newIo.urine_ml ? parseInt(newIo.urine_ml) : null,
-          stool: stoolDbValue,
-          owner_id: session.user.id,
-        })
-        .select()
-        .single();
+      let result;
 
+      // 🔑 EDIT EXISTING ENTRY
+      if (editingIo) {
+        result = await supabase
+          .from("intake_output")
+          .update({
+            time: now.format("HH:mm:ss"),
+            intake_ml: newIo.intake_ml ? parseInt(newIo.intake_ml) : null,
+            urine_ml: newIo.urine_ml ? parseInt(newIo.urine_ml) : null,
+            stool: stoolDbValue,
+          })
+          .eq("id", editingIo.id)
+          .select()
+          .single();
+      }
+      // ➕ ADD NEW ENTRY
+      else {
+        result = await supabase
+          .from("intake_output")
+          .insert({
+            resident_id: resident.id,
+            date: now.format("YYYY-MM-DD"),
+            time: now.format("HH:mm:ss"),
+            intake_ml: newIo.intake_ml ? parseInt(newIo.intake_ml) : null,
+            urine_ml: newIo.urine_ml ? parseInt(newIo.urine_ml) : null,
+            stool: stoolDbValue,
+            owner_id: session.user.id,
+          })
+          .select()
+          .single();
+      }
 
+      const { data, error } = result;
       if (error) throw error;
 
-      // ✅ UPDATE UI ONLY AFTER SUCCESS
-      setIoEntries((prev) => [
-        {
-          ...data,
-          time: data.time?.slice(0, 5),
-        },
-        ...prev,
-      ]);
+      // ✅ UPDATE UI
+      if (editingIo) {
+        setIoEntries((prev) =>
+          prev.map((x) => (x.id === data.id ? data : x))
+        );
+      } else {
+        setIoEntries((prev) => [data, ...prev]);
+      }
 
+      setEditingIo(null);
       setNewIo({ intake_ml: "", urine_ml: "", stool: "" });
       setShowIoForm(false);
       Toast.show({ type: "success", text1: "I/O saved" });
     } catch (err) {
-      console.error("Error inserting I/O:", err.message || err);
+      console.error("Error saving I/O:", err.message || err);
       Toast.show({ type: "error", text1: "I/O save failed" });
     } finally {
       setSavingIo(false);
     }
   };
-
 
   /* --------------------------------------------------
    SPECIFIC TASK ADD/EDIT MODAL
@@ -1004,21 +1029,84 @@ export default function ResidentCardModal({ resident, onClose, onUpdateResident 
                 <Text style={{ color: "#6B7280" }}>No entries added today.</Text>
               ) : (
                 ioEntries.map((item) => (
-                  <View key={item.id} style={styles.ioCard}>
-                    <Text style={styles.ioTime}>
-                      🕒 {item.time?.slice(0, 5) ?? "—"}
-                    </Text>
+                  <View
+                    key={item.id}
+                    style={[
+                      styles.ioCard,
+                      {
+                        backgroundColor: "#EFF6FF",
+                        borderWidth: 1,
+                        borderColor: "#DBEAFE",
+                      },
+                    ]}
+                  >
 
+
+                    {/* HEADER: time + actions */}
+                    <View
+                      style={{
+                        flexDirection: "row",
+                        justifyContent: "space-between",
+                        alignItems: "center",
+                        marginBottom: 6,
+                      }}
+                    >
+                      <Text style={styles.ioTime}>
+                        🕒 {item.time ? moment(item.time, "HH:mm:ss").format("h:mm A") : "—"}
+                      </Text>
+
+                      {isToday && (
+                        <View style={{ flexDirection: "row", alignItems: "center", gap: 12 }}>
+                          {/* EDIT */}
+                          <TouchableOpacity
+                            onPress={() => {
+                              setEditingIo(item);
+                              setNewIo({
+                                intake_ml: item.intake_ml?.toString() || "",
+                                urine_ml: item.urine_ml?.toString() || "",
+                                stool:
+                                  item.stool === "Pass"
+                                    ? "pass"
+                                    : item.stool === "Not Pass"
+                                      ? "not_pass"
+                                      : "",
+                              });
+                              setIoTime(
+                                item.time
+                                  ? moment(item.time, "HH:mm:ss").toDate()
+                                  : null
+                              );
+                              setShowIoForm(true);
+                            }}
+                          >
+                            <MaterialIcons name="edit" size={20} color="#2563EB" />
+                          </TouchableOpacity>
+
+                          {/* DELETE */}
+                          <TouchableOpacity onPress={() => setConfirmDeleteIo(item)}>
+                            <MaterialIcons name="delete" size={20} color="#DC2626" />
+                          </TouchableOpacity>
+                        </View>
+                      )}
+                    </View>
+
+
+                    {/* SUBTLE DIVIDER */}
+                    <View
+                      style={{
+                        height: 1,
+                        backgroundColor: "#DBEAFE",
+                        marginBottom: 6,
+                      }}
+                    />
+
+                    {/* READINGS */}
                     <View style={styles.ioGrid}>
                       <Text style={styles.ioLabel}>Intake</Text>
-                      <Text style={styles.ioValue}>
-                        {item.intake_ml ?? 0} ml
-                      </Text>
+                      <Text style={styles.ioValue}>{item.intake_ml ?? 0} ml</Text>
 
                       <Text style={styles.ioLabel}>Urine</Text>
-                      <Text style={styles.ioValue}>
-                        {item.urine_ml ?? 0} ml
-                      </Text>
+                      <Text style={styles.ioValue}>{item.urine_ml ?? 0} ml</Text>
 
                       <Text style={styles.ioLabel}>Stool</Text>
                       <Text
@@ -1031,13 +1119,10 @@ export default function ResidentCardModal({ resident, onClose, onUpdateResident 
                               : {},
                         ]}
                       >
-                        {item.stool === "Pass"
-                          ? "Pass"
-                          : item.stool === "Not Pass"
-                            ? "Not Pass"
-                            : "—"}
+                        {item.stool ?? "—"}
                       </Text>
                     </View>
+
                   </View>
                 ))
               )}
@@ -1047,11 +1132,55 @@ export default function ResidentCardModal({ resident, onClose, onUpdateResident 
                 disabled={!isToday}
                 onPress={() => setShowIoForm(true)}
               >
-                <Text style={styles.addButtonText}>
-                  + Add Intake/Output Entry
-                </Text>
+                <Text style={styles.addButtonText}>+ Add Intake/Output Entry</Text>
               </TouchableOpacity>
             </View>
+            {confirmDeleteIo && (
+              <Modal transparent animationType="fade">
+                <View style={styles.modalOverlay}>
+                  <View style={styles.modalCard}>
+                    <Text style={styles.modalTitle}>Delete Entry?</Text>
+                    <Text style={{ color: "#374151", marginBottom: 14 }}>
+                      This action cannot be undone.
+                    </Text>
+
+                    <View style={{ flexDirection: "row", gap: 10 }}>
+                      <TouchableOpacity
+                        style={styles.cancelBtn}
+                        onPress={() => setConfirmDeleteIo(null)}
+                      >
+                        <Text style={styles.cancelBtnText}>Cancel</Text>
+                      </TouchableOpacity>
+
+                      <TouchableOpacity
+                        style={styles.saveBtn}
+                        onPress={async () => {
+                          const { error } = await supabase
+                            .from("intake_output")
+                            .delete()
+                            .eq("id", confirmDeleteIo.id);
+
+                          if (!error) {
+                            setIoEntries((prev) =>
+                              prev.filter((x) => x.id !== confirmDeleteIo.id)
+                            );
+                            Toast.show({ type: "success", text1: "Entry deleted" });
+                          } else {
+                            Toast.show({ type: "error", text1: "Delete failed" });
+                          }
+
+                          setConfirmDeleteIo(null);
+                        }}
+                      >
+                        <Text style={styles.saveBtnText}>Delete</Text>
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+                </View>
+              </Modal>
+            )}
+
+
 
             {/* Vitals (separate) */}
             <View style={styles.sectionCard}>
@@ -1064,27 +1193,86 @@ export default function ResidentCardModal({ resident, onClose, onUpdateResident 
               ) : (
 
                 vitals.map((v) => (
-                  <View key={v.id} style={styles.vitalsCard}>
-                    <View style={{ height: 3, backgroundColor: "#2563EB", borderRadius: 4, marginBottom: 6 }} />
+                  <View
+                    key={v.id}
+                    style={[
+                      styles.vitalsCard,
+                      {
+                        backgroundColor: "#EFF6FF",
+                        borderWidth: 1,
+                        borderColor: "#DBEAFE",
+                      },
+                    ]}
+                  >
+                    {/* HEADER: time + actions */}
+                    <View
+                      style={{
+                        flexDirection: "row",
+                        justifyContent: "space-between",
+                        alignItems: "center",
+                        marginBottom: 6,
+                      }}
+                    >
+                      <Text style={styles.vitalsTime}>
+                        🕒 {v.time ? moment(v.time, "HH:mm:ss").format("h:mm A") : "—"}
+                      </Text>
 
-                    {/* Time */}
-                    <Text style={styles.vitalsTime}>
-                      🕒 {v.time ? moment(v.time, "HH:mm:ss").format("h:mm A") : "—"}
+                      {isToday && (
+                        <View style={{ flexDirection: "row", alignItems: "center", gap: 12 }}>
+                          {/* EDIT */}
+                          <TouchableOpacity
+                            onPress={() => {
+                              setEditingVital(v);
+                              setVitalForm({
+                                bp: v.bp || "",
+                                temp: v.temp || "",
+                                pulse: v.pulse || "",
+                                resp: v.resp || "",
+                                spo2: v.spo2 || "",
+                                sugar: v.sugar || "",
+                                insulin: v.insulin || "",
+                              });
+                              setVitalTime(
+                                v.time
+                                  ? moment(v.time, "HH:mm:ss").toDate()
+                                  : new Date()
+                              );
+                              setShowVitalsForm(true);
+                            }}
+                          >
+                            <MaterialIcons name="edit" size={20} color="#2563EB" />
+                          </TouchableOpacity>
 
-                    </Text>
+                          {/* DELETE */}
+                          <TouchableOpacity onPress={() => setConfirmDeleteVital(v)}>
+                            <MaterialIcons name="delete" size={20} color="#DC2626" />
+                          </TouchableOpacity>
+                        </View>
+                      )}
+                    </View>
 
-                    {/* Row 1 */}
+                    {/* SUBTLE DIVIDER */}
+                    <View
+                      style={{
+                        height: 1,
+                        backgroundColor: "#DBEAFE",
+                        marginBottom: 8,
+                      }}
+                    />
+
+
+                    {/* Grid */}
                     <View style={styles.vitalsGrid}>
                       <Text style={styles.vitalLabel}>BP</Text>
                       <Text style={styles.vitalValue}>{v.bp || "—"}</Text>
 
-                      <Text style={styles.vitalLabel}>Temperature</Text>
+                      <Text style={styles.vitalLabel}>Temp</Text>
                       <Text style={styles.vitalValue}>{v.temp || "—"}</Text>
 
                       <Text style={styles.vitalLabel}>Pulse</Text>
                       <Text style={styles.vitalValue}>{v.pulse || "—"}</Text>
 
-                      <Text style={styles.vitalLabel}>Respiration</Text>
+                      <Text style={styles.vitalLabel}>Resp</Text>
                       <Text style={styles.vitalValue}>{v.resp || "—"}</Text>
 
                       <Text style={styles.vitalLabel}>SpO₂</Text>
@@ -1098,6 +1286,7 @@ export default function ResidentCardModal({ resident, onClose, onUpdateResident 
                     </View>
                   </View>
                 ))
+
               )}
 
 
@@ -1117,7 +1306,12 @@ export default function ResidentCardModal({ resident, onClose, onUpdateResident 
 
             {/* Intake/Output Form Modal */}
             {showIoForm && (
-              <Modal visible transparent animationType="fade">
+              <Modal
+                visible
+                transparent
+                animationType="fade"
+                presentationStyle="overFullScreen"
+              >
                 <View style={styles.formOverlay}>
                   <View style={styles.formCard}>
                     <Text style={styles.formTitle}>Add Intake / Output</Text>
@@ -1172,6 +1366,7 @@ export default function ResidentCardModal({ resident, onClose, onUpdateResident 
                     <Pressable
                       style={styles.timeButton}
                       onPress={() => {
+                        setShowIoForm(false);
                         const d = ioTime || new Date();
                         let h = d.getHours();
                         setAmpm(h >= 12 ? "PM" : "AM");
@@ -1279,26 +1474,48 @@ export default function ResidentCardModal({ resident, onClose, onUpdateResident 
                               return;
                             }
 
-                            const { error } = await supabase.from("vitals").insert({
-                              resident_id: resident.id,
-                              time: moment(vitalTime).format("HH:mm:ss"),
-                              ...vitalForm,
-                              owner_id: session.user.id, // ✅ REQUIRED
-                            });
+                            let result;
 
+                            // 🔑 EDIT EXISTING VITAL
+                            if (editingVital) {
+                              result = await supabase
+                                .from("vitals")
+                                .update({
+                                  time: moment(vitalTime).format("HH:mm:ss"),
+                                  ...vitalForm,
+                                })
+                                .eq("id", editingVital.id)
+                                .select()
+                                .single();
+                            }
+                            // ➕ ADD NEW VITAL
+                            else {
+                              result = await supabase
+                                .from("vitals")
+                                .insert({
+                                  resident_id: resident.id,
+                                  date: new Date().toISOString().slice(0, 10),
+                                  time: moment(vitalTime).format("HH:mm:ss"),
+                                  ...vitalForm,
+                                  owner_id: session.user.id,
+                                })
+                                .select()
+                                .single();
+                            }
 
+                            const { data, error } = result;
                             if (error) throw error;
-                            setVitals((prev) => [
-                              {
-                                id: Date.now().toString(),
-                                resident_id: resident.id,
-                                ...vitalForm,
-                                time: moment(vitalTime).format("HH:mm:ss"),
-                                date: new Date().toISOString().slice(0, 10),
-                              },
-                              ...prev,
-                            ]);
 
+                            // ✅ UPDATE UI
+                            if (editingVital) {
+                              setVitals((prev) =>
+                                prev.map((x) => (x.id === data.id ? data : x))
+                              );
+                            } else {
+                              setVitals((prev) => [data, ...prev]);
+                            }
+
+                            setEditingVital(null);
                             setShowVitalsForm(false);
                             setVitalForm({
                               bp: "",
@@ -1309,7 +1526,9 @@ export default function ResidentCardModal({ resident, onClose, onUpdateResident 
                               sugar: "",
                               insulin: "",
                             });
+
                             Toast.show({ type: "success", text1: "Vital saved" });
+
                           } catch (err) {
                             console.error("Vitals insert error:", err.message || err);
                             Toast.show({ type: "error", text1: "Vitals save failed" });
@@ -1330,6 +1549,51 @@ export default function ResidentCardModal({ resident, onClose, onUpdateResident 
                 </View>
               </Modal>
             )}
+            {confirmDeleteVital && (
+              <Modal transparent animationType="fade">
+                <View style={styles.modalOverlay}>
+                  <View style={styles.modalCard}>
+                    <Text style={styles.modalTitle}>Delete Vital?</Text>
+                    <Text style={{ color: "#374151", marginBottom: 14 }}>
+                      This action cannot be undone.
+                    </Text>
+
+                    <View style={{ flexDirection: "row", gap: 10 }}>
+                      <TouchableOpacity
+                        style={styles.cancelBtn}
+                        onPress={() => setConfirmDeleteVital(null)}
+                      >
+                        <Text style={styles.cancelBtnText}>Cancel</Text>
+                      </TouchableOpacity>
+
+                      <TouchableOpacity
+                        style={styles.saveBtn}
+                        onPress={async () => {
+                          const { error } = await supabase
+                            .from("vitals")
+                            .delete()
+                            .eq("id", confirmDeleteVital.id);
+
+                          if (!error) {
+                            setVitals((prev) =>
+                              prev.filter((x) => x.id !== confirmDeleteVital.id)
+                            );
+                            Toast.show({ type: "success", text1: "Vital deleted" });
+                          } else {
+                            Toast.show({ type: "error", text1: "Delete failed" });
+                          }
+
+                          setConfirmDeleteVital(null);
+                        }}
+                      >
+                        <Text style={styles.saveBtnText}>Delete</Text>
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+                </View>
+              </Modal>
+            )}
+
             {/* 🔽 ADD CUSTOM TIME PICKER MODAL HERE */}
             <Modal
               visible={showTimePickerModal}

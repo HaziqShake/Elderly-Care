@@ -107,7 +107,13 @@ export default function UpcomingTasksScreen() {
           )}
 
           <Text style={styles.residentName}>👵 {residentLabel}</Text>
-          <Text style={styles.time}>⏰ {item.scheduled_time.slice(0, 5)}</Text>
+          <Text style={styles.time}>
+            ⏰ {new Date(`1970-01-01T${item.scheduled_time}`).toLocaleTimeString([], {
+              hour: "numeric",
+              minute: "2-digit",
+              hour12: true,
+            })}
+          </Text>
         </View>
       </View>
     );
