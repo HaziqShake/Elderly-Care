@@ -1,6 +1,6 @@
 // components/ResidentCardModal.jsx
-import * as ImagePicker from "expo-image-picker";
 import DateNavigator from "../components/DateNavigator";
+import * as ImagePicker from "expo-image-picker";
 import React, { useState, useEffect } from "react";
 import {
   View,
@@ -12,15 +12,24 @@ import {
   ScrollView,
   TextInput,
   ActivityIndicator,
+  Pressable,
 } from "react-native";
 import { MaterialIcons } from "@expo/vector-icons";
 import { supabase } from "../supabase/supabaseClient";
 import Toast from "react-native-toast-message";
-import DateTimePicker from "@react-native-community/datetimepicker";
 import moment from "moment";
 
 
 export default function ResidentCardModal({ resident, onClose, onUpdateResident }) {
+  // Custom time picker (shared)
+  const [showTimePickerModal, setShowTimePickerModal] = useState(false);
+  const [timeContext, setTimeContext] = useState(null);
+  // "task" | "vital"
+  const [ioTime, setIoTime] = useState(null); // Date object or null
+  const [hour, setHour] = useState("9");
+  const [minute, setMinute] = useState("00");
+  const [ampm, setAmpm] = useState("AM");
+
   // resident info edit mode (global for resident fields only)
   const WEEKDAYS = [
     { label: "S", value: 0 },
@@ -45,14 +54,17 @@ export default function ResidentCardModal({ resident, onClose, onUpdateResident 
   const [editingTask, setEditingTask] = useState(null); // null = adding new task
   const [taskLabel, setTaskLabel] = useState("");
   const [taskTime, setTaskTime] = useState(new Date());
-  const [showTaskTimePicker, setShowTaskTimePicker] = useState(false);
+
   const [editTasks, setEditTasks] = useState(false);
 
 
   // Intake / Output state
+  const [savingIo, setSavingIo] = useState(false);
   const [ioEntries, setIoEntries] = useState([]);
   const [ioLoading, setIoLoading] = useState(true);
   const [showIoForm, setShowIoForm] = useState(false);
+  const [editingIo, setEditingIo] = useState(null);
+  const [confirmDeleteIo, setConfirmDeleteIo] = useState(null);
   const [newIo, setNewIo] = useState({
     intake_ml: "",
     urine_ml: "",
@@ -73,7 +85,9 @@ export default function ResidentCardModal({ resident, onClose, onUpdateResident 
     insulin: "",
   });
   const [vitalTime, setVitalTime] = useState(new Date());
-  const [showVitalTimePicker, setShowVitalTimePicker] = useState(false);
+  const [editingVital, setEditingVital] = useState(null);
+  const [confirmDeleteVital, setConfirmDeleteVital] = useState(null);
+
 
 
   // resident form
@@ -130,11 +144,11 @@ export default function ResidentCardModal({ resident, onClose, onUpdateResident 
   const handlePickResidentPhoto = async () => {
     try {
       const result = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ImagePicker.MediaTypeOptions.Images,
         allowsEditing: true,
         aspect: [1, 1],
         quality: 0.7,
       });
+
 
       if (result.canceled) return;
 
@@ -179,6 +193,36 @@ export default function ResidentCardModal({ resident, onClose, onUpdateResident 
       });
     }
   };
+  const applyPickedTime = () => {
+    let h = parseInt(hour, 10);
+
+    if (ampm === "PM" && h !== 12) h += 12;
+    if (ampm === "AM" && h === 12) h = 0;
+
+    const date = new Date();
+    date.setHours(h);
+    date.setMinutes(parseInt(minute, 10));
+    date.setSeconds(0);
+
+    if (timeContext === "task") {
+      setTaskTime(date);
+    }
+
+    if (timeContext === "vital") {
+      setVitalTime(date);
+      setShowVitalsForm(true);
+    }
+
+    if (timeContext === "io") {
+      setIoTime(date);
+      setShowIoForm(true);
+    }
+
+
+    setShowTimePickerModal(false);
+    setTimeContext(null);
+  };
+
 
 
 
@@ -193,7 +237,7 @@ export default function ResidentCardModal({ resident, onClose, onUpdateResident 
 
       const { data, error } = await supabase
         .from("daily_task_instances")
-        .select("id, activity_id, status, scheduled_time, activities(label)")
+        .select("id, activity_id, status, scheduled_time, activities(label, repeat_days)")
         .eq("resident_id", resident.id)
         .eq("date", dateStr)
         .order("scheduled_time", { ascending: true });
@@ -206,9 +250,22 @@ export default function ResidentCardModal({ resident, onClose, onUpdateResident 
         label: row.activities?.label || "Unnamed Task",
         status: row.status || "pending",
         scheduled_time: row.scheduled_time || null,
+        repeat_days: row.activities?.repeat_days || [],
         isNew: false,
       }));
-      setTasks(formatted);
+
+      const weekday = selectedDate.getDay();
+
+      const filtered = formatted.filter((t) => {
+        const repeatDays = t.repeat_days;
+        if (!Array.isArray(repeatDays) || repeatDays.length === 0) return true;
+        return repeatDays.includes(weekday);
+      });
+
+      setTasks(filtered);
+      return;
+
+
     } catch (err) {
       console.error("Error fetching daily tasks:", err.message || err);
       Toast.show({ type: "error", text1: "Could not load tasks" });
@@ -368,36 +425,107 @@ export default function ResidentCardModal({ resident, onClose, onUpdateResident 
   /* ---------- Intake/Output handlers ---------- */
 
   const handleSaveIoEntry = async () => {
+    if (savingIo) return;
+    setSavingIo(true);
+
     try {
-      const { error } = await supabase.from("intake_output").insert({
-        resident_id: resident.id,
-        intake_ml: newIo.intake_ml ? parseInt(newIo.intake_ml) : null,
-        urine_ml: newIo.urine_ml ? parseInt(newIo.urine_ml) : null,
-        stool: newIo.stool || null,
-      });
+      const {
+        data: { session },
+        error: sessionError,
+      } = await supabase.auth.getSession();
+
+      if (sessionError || !session || !session.user) {
+        Toast.show({ type: "error", text1: "User not authenticated" });
+        setSavingIo(false);
+        return;
+      }
+
+      const stoolDbValue =
+        newIo.stool === "pass"
+          ? "Pass"
+          : newIo.stool === "not_pass"
+            ? "Not Pass"
+            : null;
+
+      if (!stoolDbValue) {
+        Toast.show({ type: "error", text1: "Please select Pass or Not Pass" });
+        setSavingIo(false);
+        return;
+      }
+
+      const now = ioTime ? moment(ioTime) : moment();
+
+      let result;
+
+      // 🔑 EDIT EXISTING ENTRY
+      if (editingIo) {
+        result = await supabase
+          .from("intake_output")
+          .update({
+            time: now.format("HH:mm:ss"),
+            intake_ml: newIo.intake_ml ? parseInt(newIo.intake_ml) : null,
+            urine_ml: newIo.urine_ml ? parseInt(newIo.urine_ml) : null,
+            stool: stoolDbValue,
+          })
+          .eq("id", editingIo.id)
+          .select()
+          .single();
+      }
+      // ➕ ADD NEW ENTRY
+      else {
+        result = await supabase
+          .from("intake_output")
+          .insert({
+            resident_id: resident.id,
+            date: now.format("YYYY-MM-DD"),
+            time: now.format("HH:mm:ss"),
+            intake_ml: newIo.intake_ml ? parseInt(newIo.intake_ml) : null,
+            urine_ml: newIo.urine_ml ? parseInt(newIo.urine_ml) : null,
+            stool: stoolDbValue,
+            owner_id: session.user.id,
+          })
+          .select()
+          .single();
+      }
+
+      const { data, error } = result;
       if (error) throw error;
-      setIoEntries((prev) => [
-        {
-          id: Date.now().toString(),
-          time: new Date().toTimeString().slice(0, 5),
-          intake_ml: newIo.intake_ml,
-          urine_ml: newIo.urine_ml,
-          stool: newIo.stool,
-        },
-        ...prev,
-      ]);
+
+      // ✅ UPDATE UI
+      if (editingIo) {
+        setIoEntries((prev) =>
+          prev.map((x) => (x.id === data.id ? data : x))
+        );
+      } else {
+        setIoEntries((prev) => [data, ...prev]);
+      }
+
+      setEditingIo(null);
       setNewIo({ intake_ml: "", urine_ml: "", stool: "" });
       setShowIoForm(false);
       Toast.show({ type: "success", text1: "I/O saved" });
     } catch (err) {
-      console.error("Error inserting I/O:", err.message || err);
+      console.error("Error saving I/O:", err.message || err);
       Toast.show({ type: "error", text1: "I/O save failed" });
+    } finally {
+      setSavingIo(false);
     }
   };
+
   /* --------------------------------------------------
    SPECIFIC TASK ADD/EDIT MODAL
 -------------------------------------------------- */
   const saveSpecificTaskFromModal = async () => {
+    const {
+      data: { user },
+      error: userError,
+    } = await supabase.auth.getUser();
+
+    if (userError || !user) {
+      Toast.show({ type: "error", text1: "User not authenticated" });
+      return;
+    }
+
     const timeSql = moment(taskTime).format("HH:mm:ss");
 
     // ADD NEW TASK
@@ -409,6 +537,8 @@ export default function ResidentCardModal({ resident, onClose, onUpdateResident 
           label: taskLabel,
           type: "specific",
           default_time: timeSql,
+          repeat_days: repeatDays,
+          owner_id: user.id,
         })
         .select()
         .single();
@@ -420,11 +550,12 @@ export default function ResidentCardModal({ resident, onClose, onUpdateResident 
 
       // 2) Create resident_activities mapping
       await supabase.from("resident_activities").insert({
-        label: taskLabel,
-        type: "specific",
-        default_time: timeSql,
-        repeat_days: repeatDays,
+        resident_id: resident.id,
+        activity_id: act.id,
+        scheduled_time: timeSql,
+        owner_id: user.id,
       });
+
 
       // 3) Create today's daily instance
       const today = new Date().toISOString().slice(0, 10);
@@ -435,6 +566,7 @@ export default function ResidentCardModal({ resident, onClose, onUpdateResident 
         scheduled_time: timeSql,
         date: today,
         status: "pending",
+        owner_id: user.id,
       });
     }
 
@@ -473,7 +605,8 @@ export default function ResidentCardModal({ resident, onClose, onUpdateResident 
     // Close modal + reload
     setTaskModalVisible(false);
     setEditingTask(null);
-    loadTasks();
+    fetchTasks();
+
   };
 
   // OPEN MODAL FOR ADD
@@ -534,16 +667,28 @@ export default function ResidentCardModal({ resident, onClose, onUpdateResident 
   const toggleSpecificTaskStatus = async (task) => {
     const newStatus = task.status === "done" ? "pending" : "done";
 
-    const today = new Date().toISOString().slice(0, 10);
+    // 1️⃣ Optimistic UI update (instant)
+    setTasks((prev) =>
+      prev.map((t) =>
+        t.id === task.id ? { ...t, status: newStatus } : t
+      )
+    );
 
-    await supabase
+    // 2️⃣ Backend sync (no waiting for UI)
+    const { error } = await supabase
       .from("daily_task_instances")
       .update({ status: newStatus })
-      .eq("resident_id", resident.id)
-      .eq("activity_id", task.activity_id)
-      .eq("date", today);
+      .eq("id", task.id);
 
-    loadTasks();
+    // 3️⃣ Rollback if backend fails
+    if (error) {
+      setTasks((prev) =>
+        prev.map((t) =>
+          t.id === task.id ? { ...t, status: task.status } : t
+        )
+      );
+    }
+
   };
 
 
@@ -559,11 +704,6 @@ export default function ResidentCardModal({ resident, onClose, onUpdateResident 
               {editMode ? formData.name || "Edit Resident" : formData.name}
             </Text>
             <View style={{ flexDirection: "row", alignItems: "center" }}>
-              {!editMode && (
-                <TouchableOpacity onPress={() => setEditMode(true)} style={{ marginRight: 10 }}>
-                  <MaterialIcons name="edit" size={24} color="#fff" />
-                </TouchableOpacity>
-              )}
               <TouchableOpacity onPress={onClose}>
                 <MaterialIcons name="close" size={26} color="#fff" />
               </TouchableOpacity>
@@ -581,62 +721,132 @@ export default function ResidentCardModal({ resident, onClose, onUpdateResident 
 
 
           <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 24 }}>
-            {/* Profile Info */}
-            <View style={styles.profileRow}>
-              <TouchableOpacity onPress={handlePickResidentPhoto}>
-                {resident.photo_url ? (
-                  <Image
-                    source={{ uri: resident.photo_url }}
-                    style={styles.avatar}
-                  />
-                ) : (
-                  <View style={[styles.avatar, styles.defaultAvatar]}>
-                    <Text style={styles.avatarText}>
-                      {resident.name?.charAt(0)?.toUpperCase() || "?"}
-                    </Text>
-                  </View>
-                )}
-              </TouchableOpacity>
+            {/* -------------------- RESIDENT INFO -------------------- */}
+            <View style={styles.sectionCard}>
+              {/* Section header */}
+              <View
+                style={{
+                  flexDirection: "row",
+                  justifyContent: "space-between",
+                  alignItems: "center",
+                  marginBottom: 12,
+                }}
+              >
+                <Text style={styles.sectionTitle}>Resident Info</Text>
 
-
-              <View style={{ marginLeft: 12, flex: 1 }}>
-                {editMode ? (
-                  <>
-                    <TextInput
-                      style={styles.input}
-                      value={formData.name}
-                      onChangeText={(t) => setFormData({ ...formData, name: t })}
-                      placeholder="Name"
-                    />
-                    <TextInput
-                      style={styles.input}
-                      value={formData.age}
-                      onChangeText={(t) => setFormData({ ...formData, age: t })}
-                      placeholder="Age"
-                      keyboardType="numeric"
-                    />
-                    <TextInput
-                      style={styles.input}
-                      value={formData.room_number}
-                      onChangeText={(t) => setFormData({ ...formData, room_number: t })}
-                      placeholder="Bed Number"
-                    />
-                    <TextInput
-                      style={styles.input}
-                      value={formData.condition}
-                      onChangeText={(t) => setFormData({ ...formData, condition: t })}
-                      placeholder="Condition"
-                    />
-                  </>
+                {!editMode ? (
+                  <TouchableOpacity onPress={() => setEditMode(true)}>
+                    <MaterialIcons name="edit" size={22} color="#2563EB" />
+                  </TouchableOpacity>
                 ) : (
-                  <>
-                    <Text style={styles.info}>🧓 Age: {resident.age}</Text>
-                    <Text style={styles.info}>🛏 Bed: {resident.room_number}</Text>
-                    <Text style={styles.info}>⚕️ Condition: {resident.condition || "N/A"}</Text>
-                  </>
+                  <TouchableOpacity onPress={handleCancelResident}>
+                    <MaterialIcons name="close" size={22} color="#ef4444" />
+                  </TouchableOpacity>
                 )}
               </View>
+
+              {/* Avatar + Info row */}
+              <View style={{ flexDirection: "row", alignItems: "center" }}>
+                <TouchableOpacity onPress={handlePickResidentPhoto}>
+                  <View>
+                    {resident.photo_url ? (
+                      <Image source={{ uri: resident.photo_url }} style={styles.avatar} />
+                    ) : (
+                      <View style={[styles.avatar, styles.defaultAvatar]}>
+                        <MaterialIcons name="person-outline" size={44} color="#9CA3AF" />
+                      </View>
+                    )}
+
+                    {/* Camera badge */}
+                    <View style={styles.cameraBadge}>
+                      <MaterialIcons name="camera-alt" size={16} color="#fff" />
+                    </View>
+                  </View>
+                </TouchableOpacity>
+
+                <View style={{ marginLeft: 14, flex: 1 }}>
+                  {editMode ? (
+                    <>
+                      <TextInput
+                        style={styles.input}
+                        value={formData.name}
+                        onChangeText={(t) => setFormData({ ...formData, name: t })}
+                        placeholder="Name"
+                      />
+
+                      <TextInput
+                        style={styles.input}
+                        value={formData.age}
+                        onChangeText={(t) => setFormData({ ...formData, age: t })}
+                        placeholder="Age"
+                        keyboardType="numeric"
+                      />
+
+                      <TextInput
+                        style={styles.input}
+                        value={formData.room_number}
+                        onChangeText={(t) =>
+                          setFormData({ ...formData, room_number: t })
+                        }
+                        placeholder="Bed / Room"
+                      />
+
+                      <TextInput
+                        style={styles.input}
+                        value={formData.condition}
+                        onChangeText={(t) =>
+                          setFormData({ ...formData, condition: t })
+                        }
+                        placeholder="Condition"
+                      />
+                    </>
+                  ) : (
+                    <>
+                      <Text style={styles.info}>🧓 Age: {resident.age || "—"}</Text>
+                      <Text style={styles.info}>
+                        🛏 Bed: {resident.room_number || "—"}
+                      </Text>
+                      <Text style={styles.info}>
+                        ⚕️ Condition: {resident.condition || "—"}
+                      </Text>
+                    </>
+                  )}
+                </View>
+              </View>
+
+              {/* Save / Cancel (Resident Info only) */}
+              {editMode && (
+                <View
+                  style={{
+                    flexDirection: "row",
+                    marginTop: 14,
+                    marginHorizontal: 12,
+                  }}
+                >
+                  <TouchableOpacity
+                    style={[styles.cancelBtn, { flex: 1, marginRight: 8 }]}
+                    onPress={handleCancelResident}
+                    disabled={savingResident}
+                  >
+                    <Text style={styles.cancelText}>Cancel</Text>
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    style={[styles.saveBtn, { flex: 1, marginLeft: 8 }]}
+                    onPress={handleSaveResident}
+                    disabled={savingResident}
+                  >
+                    {savingResident ? (
+                      <ActivityIndicator color="#fff" />
+                    ) : (
+                      <Text style={styles.saveText}>Save</Text>
+                    )}
+                  </TouchableOpacity>
+                </View>
+              )}
             </View>
+
+
 
             {/* -------------------- SPECIFIC TASKS (NEW UI) -------------------- */}
             <View style={styles.sectionCard}>
@@ -740,23 +950,27 @@ export default function ResidentCardModal({ resident, onClose, onUpdateResident 
 
                   <Text style={styles.modalLabel}>Time</Text>
 
-                  <TouchableOpacity style={styles.timeButton} onPress={() => setShowTaskTimePicker(true)}>
+
+
+                  <TouchableOpacity
+                    style={styles.timeButton}
+                    onPress={() => {
+                      const d = taskTime || new Date();
+                      let h = d.getHours();
+                      setAmpm(h >= 12 ? "PM" : "AM");
+                      h = h % 12 || 12;
+                      setHour(String(h));
+                      setMinute(String(d.getMinutes()).padStart(2, "0"));
+                      setTimeContext("task");
+                      setShowTimePickerModal(true);
+                    }}
+                  >
                     <MaterialIcons name="schedule" size={22} color="#2563EB" />
-                    <Text style={styles.timeButtonText}>{moment(taskTime).format("h:mm A")}</Text>
+                    <Text style={styles.timeButtonText}>
+                      {moment(taskTime).format("h:mm A")}
+                    </Text>
                   </TouchableOpacity>
 
-                  {showTaskTimePicker && (
-                    <DateTimePicker
-                      value={taskTime}
-                      mode="time"
-                      display="spinner"
-                      is24Hour={false}
-                      onChange={(e, picked) => {
-                        if (picked) setTaskTime(picked);
-                        setShowTaskTimePicker(false);
-                      }}
-                    />
-                  )}
                   <Text style={styles.modalLabel}>Repeat on</Text>
 
                   <View style={styles.weekRow}>
@@ -815,11 +1029,100 @@ export default function ResidentCardModal({ resident, onClose, onUpdateResident 
                 <Text style={{ color: "#6B7280" }}>No entries added today.</Text>
               ) : (
                 ioEntries.map((item) => (
-                  <View key={item.id} style={styles.ioRow}>
-                    <Text style={styles.ioText}>🕒 {item.time?.slice(0, 5) ?? "—"}</Text>
-                    <Text style={styles.ioText}>🥤 Intake: {item.intake_ml ?? 0} ml</Text>
-                    <Text style={styles.ioText}>💧 Urine: {item.urine_ml ?? 0} ml</Text>
-                    <Text style={styles.ioText}>🚽 Stool: {item.stool ?? "—"}</Text>
+                  <View
+                    key={item.id}
+                    style={[
+                      styles.ioCard,
+                      {
+                        backgroundColor: "#EFF6FF",
+                        borderWidth: 1,
+                        borderColor: "#DBEAFE",
+                      },
+                    ]}
+                  >
+
+
+                    {/* HEADER: time + actions */}
+                    <View
+                      style={{
+                        flexDirection: "row",
+                        justifyContent: "space-between",
+                        alignItems: "center",
+                        marginBottom: 6,
+                      }}
+                    >
+                      <Text style={styles.ioTime}>
+                        🕒 {item.time ? moment(item.time, "HH:mm:ss").format("h:mm A") : "—"}
+                      </Text>
+
+                      {isToday && (
+                        <View style={{ flexDirection: "row", alignItems: "center", gap: 12 }}>
+                          {/* EDIT */}
+                          <TouchableOpacity
+                            onPress={() => {
+                              setEditingIo(item);
+                              setNewIo({
+                                intake_ml: item.intake_ml?.toString() || "",
+                                urine_ml: item.urine_ml?.toString() || "",
+                                stool:
+                                  item.stool === "Pass"
+                                    ? "pass"
+                                    : item.stool === "Not Pass"
+                                      ? "not_pass"
+                                      : "",
+                              });
+                              setIoTime(
+                                item.time
+                                  ? moment(item.time, "HH:mm:ss").toDate()
+                                  : null
+                              );
+                              setShowIoForm(true);
+                            }}
+                          >
+                            <MaterialIcons name="edit" size={20} color="#2563EB" />
+                          </TouchableOpacity>
+
+                          {/* DELETE */}
+                          <TouchableOpacity onPress={() => setConfirmDeleteIo(item)}>
+                            <MaterialIcons name="delete" size={20} color="#DC2626" />
+                          </TouchableOpacity>
+                        </View>
+                      )}
+                    </View>
+
+
+                    {/* SUBTLE DIVIDER */}
+                    <View
+                      style={{
+                        height: 1,
+                        backgroundColor: "#DBEAFE",
+                        marginBottom: 6,
+                      }}
+                    />
+
+                    {/* READINGS */}
+                    <View style={styles.ioGrid}>
+                      <Text style={styles.ioLabel}>Intake</Text>
+                      <Text style={styles.ioValue}>{item.intake_ml ?? 0} ml</Text>
+
+                      <Text style={styles.ioLabel}>Urine</Text>
+                      <Text style={styles.ioValue}>{item.urine_ml ?? 0} ml</Text>
+
+                      <Text style={styles.ioLabel}>Stool</Text>
+                      <Text
+                        style={[
+                          styles.ioValue,
+                          item.stool === "Pass"
+                            ? { color: "#16A34A" }
+                            : item.stool === "Not Pass"
+                              ? { color: "#DC2626" }
+                              : {},
+                        ]}
+                      >
+                        {item.stool ?? "—"}
+                      </Text>
+                    </View>
+
                   </View>
                 ))
               )}
@@ -831,8 +1134,53 @@ export default function ResidentCardModal({ resident, onClose, onUpdateResident 
               >
                 <Text style={styles.addButtonText}>+ Add Intake/Output Entry</Text>
               </TouchableOpacity>
-
             </View>
+            {confirmDeleteIo && (
+              <Modal transparent animationType="fade">
+                <View style={styles.modalOverlay}>
+                  <View style={styles.modalCard}>
+                    <Text style={styles.modalTitle}>Delete Entry?</Text>
+                    <Text style={{ color: "#374151", marginBottom: 14 }}>
+                      This action cannot be undone.
+                    </Text>
+
+                    <View style={{ flexDirection: "row", gap: 10 }}>
+                      <TouchableOpacity
+                        style={styles.cancelBtn}
+                        onPress={() => setConfirmDeleteIo(null)}
+                      >
+                        <Text style={styles.cancelBtnText}>Cancel</Text>
+                      </TouchableOpacity>
+
+                      <TouchableOpacity
+                        style={styles.saveBtn}
+                        onPress={async () => {
+                          const { error } = await supabase
+                            .from("intake_output")
+                            .delete()
+                            .eq("id", confirmDeleteIo.id);
+
+                          if (!error) {
+                            setIoEntries((prev) =>
+                              prev.filter((x) => x.id !== confirmDeleteIo.id)
+                            );
+                            Toast.show({ type: "success", text1: "Entry deleted" });
+                          } else {
+                            Toast.show({ type: "error", text1: "Delete failed" });
+                          }
+
+                          setConfirmDeleteIo(null);
+                        }}
+                      >
+                        <Text style={styles.saveBtnText}>Delete</Text>
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+                </View>
+              </Modal>
+            )}
+
+
 
             {/* Vitals (separate) */}
             <View style={styles.sectionCard}>
@@ -845,37 +1193,100 @@ export default function ResidentCardModal({ resident, onClose, onUpdateResident 
               ) : (
 
                 vitals.map((v) => (
-                  <View key={v.id} style={styles.vitalsCard}>
-                    {/* Time */}
-                    <Text style={styles.vitalsTime}>
-                      🕒 {v.time ? moment(v.time, "HH:mm:ss").format("h:mm A") : "—"}
+                  <View
+                    key={v.id}
+                    style={[
+                      styles.vitalsCard,
+                      {
+                        backgroundColor: "#EFF6FF",
+                        borderWidth: 1,
+                        borderColor: "#DBEAFE",
+                      },
+                    ]}
+                  >
+                    {/* HEADER: time + actions */}
+                    <View
+                      style={{
+                        flexDirection: "row",
+                        justifyContent: "space-between",
+                        alignItems: "center",
+                        marginBottom: 6,
+                      }}
+                    >
+                      <Text style={styles.vitalsTime}>
+                        🕒 {v.time ? moment(v.time, "HH:mm:ss").format("h:mm A") : "—"}
+                      </Text>
 
-                    </Text>
+                      {isToday && (
+                        <View style={{ flexDirection: "row", alignItems: "center", gap: 12 }}>
+                          {/* EDIT */}
+                          <TouchableOpacity
+                            onPress={() => {
+                              setEditingVital(v);
+                              setVitalForm({
+                                bp: v.bp || "",
+                                temp: v.temp || "",
+                                pulse: v.pulse || "",
+                                resp: v.resp || "",
+                                spo2: v.spo2 || "",
+                                sugar: v.sugar || "",
+                                insulin: v.insulin || "",
+                              });
+                              setVitalTime(
+                                v.time
+                                  ? moment(v.time, "HH:mm:ss").toDate()
+                                  : new Date()
+                              );
+                              setShowVitalsForm(true);
+                            }}
+                          >
+                            <MaterialIcons name="edit" size={20} color="#2563EB" />
+                          </TouchableOpacity>
 
-                    {/* Row 1 */}
-                    <View style={styles.vitalsRow}>
-                      <Text style={styles.vitalsItem}><Text style={styles.vitalsLabel}>BP:</Text> {v.bp || "—"}</Text>
-                      <Text style={styles.vitalsItem}><Text style={styles.vitalsLabel}>Temp:</Text> {v.temp || "—"}</Text>
+                          {/* DELETE */}
+                          <TouchableOpacity onPress={() => setConfirmDeleteVital(v)}>
+                            <MaterialIcons name="delete" size={20} color="#DC2626" />
+                          </TouchableOpacity>
+                        </View>
+                      )}
                     </View>
 
-                    {/* Row 2 */}
-                    <View style={styles.vitalsRow}>
-                      <Text style={styles.vitalsItem}><Text style={styles.vitalsLabel}>Pulse:</Text> {v.pulse || "—"}</Text>
-                      <Text style={styles.vitalsItem}><Text style={styles.vitalsLabel}>Resp:</Text> {v.resp || "—"}</Text>
-                    </View>
+                    {/* SUBTLE DIVIDER */}
+                    <View
+                      style={{
+                        height: 1,
+                        backgroundColor: "#DBEAFE",
+                        marginBottom: 8,
+                      }}
+                    />
 
-                    {/* Row 3 */}
-                    <View style={styles.vitalsRow}>
-                      <Text style={styles.vitalsItem}><Text style={styles.vitalsLabel}>SPO₂:</Text> {v.spo2 || "—"}</Text>
-                      <Text style={styles.vitalsItem}><Text style={styles.vitalsLabel}>Sugar:</Text> {v.sugar || "—"}</Text>
-                    </View>
 
-                    {/* Row 4 (single column) */}
-                    <Text style={styles.vitalsSingle}>
-                      <Text style={styles.vitalsLabel}>Insulin:</Text> {v.insulin || "—"}
-                    </Text>
+                    {/* Grid */}
+                    <View style={styles.vitalsGrid}>
+                      <Text style={styles.vitalLabel}>BP</Text>
+                      <Text style={styles.vitalValue}>{v.bp || "—"}</Text>
+
+                      <Text style={styles.vitalLabel}>Temp</Text>
+                      <Text style={styles.vitalValue}>{v.temp || "—"}</Text>
+
+                      <Text style={styles.vitalLabel}>Pulse</Text>
+                      <Text style={styles.vitalValue}>{v.pulse || "—"}</Text>
+
+                      <Text style={styles.vitalLabel}>Resp</Text>
+                      <Text style={styles.vitalValue}>{v.resp || "—"}</Text>
+
+                      <Text style={styles.vitalLabel}>SpO₂</Text>
+                      <Text style={styles.vitalValue}>{v.spo2 || "—"}</Text>
+
+                      <Text style={styles.vitalLabel}>Sugar</Text>
+                      <Text style={styles.vitalValue}>{v.sugar || "—"}</Text>
+
+                      <Text style={styles.vitalLabel}>Insulin</Text>
+                      <Text style={styles.vitalValue}>{v.insulin || "—"}</Text>
+                    </View>
                   </View>
                 ))
+
               )}
 
 
@@ -893,22 +1304,14 @@ export default function ResidentCardModal({ resident, onClose, onUpdateResident 
 
             </View>
 
-            {/* Save / Cancel (global resident info) */}
-            {editMode && (
-              <View style={styles.bottomActions}>
-                <TouchableOpacity style={styles.cancelBtn} onPress={handleCancelResident} disabled={savingResident}>
-                  <Text style={styles.cancelText}>Cancel</Text>
-                </TouchableOpacity>
-
-                <TouchableOpacity style={styles.saveBtn} onPress={handleSaveResident} disabled={savingResident}>
-                  {savingResident ? <ActivityIndicator color="#fff" /> : <Text style={styles.saveText}>Save Changes</Text>}
-                </TouchableOpacity>
-              </View>
-            )}
-
             {/* Intake/Output Form Modal */}
             {showIoForm && (
-              <Modal visible transparent animationType="fade">
+              <Modal
+                visible
+                transparent
+                animationType="fade"
+                presentationStyle="overFullScreen"
+              >
                 <View style={styles.formOverlay}>
                   <View style={styles.formCard}>
                     <Text style={styles.formTitle}>Add Intake / Output</Text>
@@ -929,16 +1332,65 @@ export default function ResidentCardModal({ resident, onClose, onUpdateResident 
                       onChangeText={(t) => setNewIo({ ...newIo, urine_ml: t })}
                     />
 
-                    <TextInput
-                      style={styles.input}
-                      placeholder="Stool (Pass / Not Pass)"
-                      value={newIo.stool}
-                      onChangeText={(t) => setNewIo({ ...newIo, stool: t })}
-                    />
+                    <Text style={styles.modalLabel}>Stool</Text>
 
+                    <View style={{ flexDirection: "row", marginTop: 6 }}>
+                      {["pass", "not_pass"].map((v) => {
+                        const selected = newIo.stool === v;
+                        return (
+                          <TouchableOpacity
+                            key={v}
+                            onPress={() => setNewIo({ ...newIo, stool: v })}
+                            style={[
+                              styles.choiceBtn,
+                              selected && styles.choiceBtnActive,
+                            ]}
+                          >
+                            <Text
+                              style={[
+                                styles.choiceBtnText,
+                                selected && styles.choiceBtnTextActive,
+                              ]}
+                            >
+                              {v === "pass" ? "Pass" : "Not Pass"}
+                            </Text>
+                          </TouchableOpacity>
+                        );
+                      })}
+                    </View>
+
+
+                    {/* Optional Time Picker */}
+                    <Text style={styles.modalLabel}>Time</Text>
+
+                    <Pressable
+                      style={styles.timeButton}
+                      onPress={() => {
+                        setShowIoForm(false);
+                        const d = ioTime || new Date();
+                        let h = d.getHours();
+                        setAmpm(h >= 12 ? "PM" : "AM");
+                        h = h % 12 || 12;
+                        setHour(String(h));
+                        setMinute(String(d.getMinutes()).padStart(2, "0"));
+                        setTimeContext("io");
+                        setShowTimePickerModal(true);
+                      }}
+                    >
+                      <MaterialIcons name="schedule" size={22} color="#2563EB" />
+                      <Text style={styles.timeButtonText}>
+                        {ioTime ? moment(ioTime).format("h:mm A") : "Use current time"}
+                      </Text>
+                    </Pressable>
+
+                    {/* Save / Cancel buttons */}
                     <View style={{ flexDirection: "row", justifyContent: "space-between", marginTop: 10 }}>
                       <TouchableOpacity
-                        style={[styles.saveBtn, { flex: 1, marginRight: 5 }]}
+                        style={[
+                          styles.saveBtn,
+                          { flex: 1, marginRight: 5, opacity: savingIo ? 0.6 : 1 },
+                        ]}
+                        disabled={savingIo}
                         onPress={handleSaveIoEntry}
                       >
                         <Text style={styles.saveText}>Save</Text>
@@ -946,11 +1398,15 @@ export default function ResidentCardModal({ resident, onClose, onUpdateResident 
 
                       <TouchableOpacity
                         style={[styles.cancelBtn, { flex: 1, marginLeft: 5 }]}
-                        onPress={() => setShowIoForm(false)}
+                        onPress={() => {
+                          setShowIoForm(false);
+                          setIoTime(null); // reset optional time
+                        }}
                       >
                         <Text style={styles.cancelText}>Cancel</Text>
                       </TouchableOpacity>
                     </View>
+
                   </View>
                 </View>
               </Modal>
@@ -964,9 +1420,23 @@ export default function ResidentCardModal({ resident, onClose, onUpdateResident 
                     <Text style={styles.modalTitle}>Add Vital Reading</Text>
                     <Text style={styles.modalLabel}>Time</Text>
 
+
                     <TouchableOpacity
                       style={styles.timeButton}
-                      onPress={() => setShowVitalTimePicker(true)}
+                      onPress={() => {
+                        setShowVitalsForm(false); // 🔑 IMPORTANT
+
+                        const d = vitalTime || new Date();
+                        let h = d.getHours();
+                        setAmpm(h >= 12 ? "PM" : "AM");
+                        h = h % 12 || 12;
+                        setHour(String(h));
+                        setMinute(String(d.getMinutes()).padStart(2, "0"));
+
+                        setTimeContext("vital");
+                        setShowTimePickerModal(true);
+                      }}
+
                     >
                       <MaterialIcons name="schedule" size={22} color="#2563EB" />
                       <Text style={styles.timeButtonText}>
@@ -974,18 +1444,6 @@ export default function ResidentCardModal({ resident, onClose, onUpdateResident 
                       </Text>
                     </TouchableOpacity>
 
-                    {showVitalTimePicker && (
-                      <DateTimePicker
-                        value={vitalTime}
-                        mode="time"
-                        display="spinner"
-                        is24Hour={false}
-                        onChange={(e, picked) => {
-                          if (picked) setVitalTime(picked);
-                          setShowVitalTimePicker(false);
-                        }}
-                      />
-                    )}
 
 
                     {["bp", "temp", "pulse", "resp", "spo2", "sugar", "insulin"].map((field) => (
@@ -993,9 +1451,13 @@ export default function ResidentCardModal({ resident, onClose, onUpdateResident 
                         key={field}
                         placeholder={field.toUpperCase()}
                         style={styles.input}
+                        keyboardType="numeric"   // 🔑 ADD THIS
                         value={vitalForm[field]}
-                        onChangeText={(t) => setVitalForm((prev) => ({ ...prev, [field]: t }))}
+                        onChangeText={(t) =>
+                          setVitalForm((prev) => ({ ...prev, [field]: t }))
+                        }
                       />
+
                     ))}
 
                     <View style={styles.formRow}>
@@ -1003,20 +1465,57 @@ export default function ResidentCardModal({ resident, onClose, onUpdateResident 
                         style={[styles.saveBtn, { flex: 1 }]}
                         onPress={async () => {
                           try {
-                            const { error } = await supabase.from("vitals").insert({
-                              resident_id: resident.id,
-                              time: moment(vitalTime).format("HH:mm:ss"),
-                              ...vitalForm,
-                            });
+                            const {
+                              data: { session },
+                            } = await supabase.auth.getSession();
 
+                            if (!session?.user) {
+                              Toast.show({ type: "error", text1: "User not authenticated" });
+                              return;
+                            }
+
+                            let result;
+
+                            // 🔑 EDIT EXISTING VITAL
+                            if (editingVital) {
+                              result = await supabase
+                                .from("vitals")
+                                .update({
+                                  time: moment(vitalTime).format("HH:mm:ss"),
+                                  ...vitalForm,
+                                })
+                                .eq("id", editingVital.id)
+                                .select()
+                                .single();
+                            }
+                            // ➕ ADD NEW VITAL
+                            else {
+                              result = await supabase
+                                .from("vitals")
+                                .insert({
+                                  resident_id: resident.id,
+                                  date: new Date().toISOString().slice(0, 10),
+                                  time: moment(vitalTime).format("HH:mm:ss"),
+                                  ...vitalForm,
+                                  owner_id: session.user.id,
+                                })
+                                .select()
+                                .single();
+                            }
+
+                            const { data, error } = result;
                             if (error) throw error;
-                            setVitals((prev) => [
-                              {
-                                id: Date.now().toString(),
-                                ...vitalForm,
-                              },
-                              ...prev,
-                            ]);
+
+                            // ✅ UPDATE UI
+                            if (editingVital) {
+                              setVitals((prev) =>
+                                prev.map((x) => (x.id === data.id ? data : x))
+                              );
+                            } else {
+                              setVitals((prev) => [data, ...prev]);
+                            }
+
+                            setEditingVital(null);
                             setShowVitalsForm(false);
                             setVitalForm({
                               bp: "",
@@ -1027,7 +1526,9 @@ export default function ResidentCardModal({ resident, onClose, onUpdateResident 
                               sugar: "",
                               insulin: "",
                             });
+
                             Toast.show({ type: "success", text1: "Vital saved" });
+
                           } catch (err) {
                             console.error("Vitals insert error:", err.message || err);
                             Toast.show({ type: "error", text1: "Vitals save failed" });
@@ -1048,7 +1549,183 @@ export default function ResidentCardModal({ resident, onClose, onUpdateResident 
                 </View>
               </Modal>
             )}
+            {confirmDeleteVital && (
+              <Modal transparent animationType="fade">
+                <View style={styles.modalOverlay}>
+                  <View style={styles.modalCard}>
+                    <Text style={styles.modalTitle}>Delete Vital?</Text>
+                    <Text style={{ color: "#374151", marginBottom: 14 }}>
+                      This action cannot be undone.
+                    </Text>
+
+                    <View style={{ flexDirection: "row", gap: 10 }}>
+                      <TouchableOpacity
+                        style={styles.cancelBtn}
+                        onPress={() => setConfirmDeleteVital(null)}
+                      >
+                        <Text style={styles.cancelBtnText}>Cancel</Text>
+                      </TouchableOpacity>
+
+                      <TouchableOpacity
+                        style={styles.saveBtn}
+                        onPress={async () => {
+                          const { error } = await supabase
+                            .from("vitals")
+                            .delete()
+                            .eq("id", confirmDeleteVital.id);
+
+                          if (!error) {
+                            setVitals((prev) =>
+                              prev.filter((x) => x.id !== confirmDeleteVital.id)
+                            );
+                            Toast.show({ type: "success", text1: "Vital deleted" });
+                          } else {
+                            Toast.show({ type: "error", text1: "Delete failed" });
+                          }
+
+                          setConfirmDeleteVital(null);
+                        }}
+                      >
+                        <Text style={styles.saveBtnText}>Delete</Text>
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+                </View>
+              </Modal>
+            )}
+
+            {/* 🔽 ADD CUSTOM TIME PICKER MODAL HERE */}
+            <Modal
+              visible={showTimePickerModal}
+              transparent
+              animationType="fade"
+              presentationStyle="overFullScreen"
+            >
+
+              <View style={styles.modalOverlay}>
+                <View style={styles.modalCard}>
+                  <Text style={styles.modalTitle}>Select Time</Text>
+                  <Text style={styles.timePreview}>
+                    {hour}:{minute} {ampm}
+                  </Text>
+
+                  <View
+                    style={{
+                      flexDirection: "row",
+                      justifyContent: "center",
+                      maxHeight: 220,
+                    }}
+                  >
+                    {/* Hour */}
+                    <View style={styles.timePickerColumn}>
+                      <ScrollView>
+                        {Array.from({ length: 12 }, (_, i) => i + 1).map((h) => {
+                          const selected = hour === String(h);
+                          return (
+                            <TouchableOpacity
+                              key={h}
+                              onPress={() => setHour(String(h))}
+                              style={[
+                                styles.timeOption,
+                                selected && styles.timeOptionSelected,
+                              ]}
+                            >
+                              <Text
+                                style={[
+                                  styles.timeOptionText,
+                                  selected && styles.timeOptionTextSelected,
+                                ]}
+                              >
+                                {h}
+                              </Text>
+                            </TouchableOpacity>
+                          );
+                        })}
+                      </ScrollView>
+                    </View>
+
+
+
+                    {/* Minute */}
+                    <View style={styles.timePickerColumn}>
+                      <ScrollView>
+                        {Array.from({ length: 60 }, (_, i) =>
+                          String(i).padStart(2, "0")
+                        ).map((m) => {
+                          const selected = minute === m;
+                          return (
+                            <TouchableOpacity
+                              key={m}
+                              onPress={() => setMinute(m)}
+                              style={[
+                                styles.timeOption,
+                                selected && styles.timeOptionSelected,
+                              ]}
+                            >
+                              <Text
+                                style={[
+                                  styles.timeOptionText,
+                                  selected && styles.timeOptionTextSelected,
+                                ]}
+                              >
+                                {m}
+                              </Text>
+                            </TouchableOpacity>
+                          );
+                        })}
+                      </ScrollView>
+                    </View>
+
+
+                    {/* AM / PM */}
+                    <View style={styles.timePickerColumn}>
+                      {["AM", "PM"].map((p) => {
+                        const selected = ampm === p;
+                        return (
+                          <TouchableOpacity
+                            key={p}
+                            onPress={() => setAmpm(p)}
+                            style={[
+                              styles.timeOption,
+                              selected && styles.timeOptionSelected,
+                            ]}
+                          >
+                            <Text
+                              style={[
+                                styles.timeOptionText,
+                                selected && styles.timeOptionTextSelected,
+                              ]}
+                            >
+                              {p}
+                            </Text>
+                          </TouchableOpacity>
+                        );
+                      })}
+                    </View>
+
+                  </View>
+
+                  <View style={styles.modalButtonsRow}>
+                    <TouchableOpacity
+                      style={styles.cancelBtn}
+                      onPress={() => setShowTimePickerModal(false)}
+                    >
+                      <Text style={styles.cancelBtnText}>Cancel</Text>
+                    </TouchableOpacity>
+
+                    <TouchableOpacity
+                      style={styles.saveBtn}
+                      onPress={applyPickedTime}
+                    >
+                      <Text style={styles.saveBtnText}>Done</Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              </View>
+            </Modal>
+            {/* 🔼 END CUSTOM TIME PICKER MODAL */}
           </ScrollView>
+
         </View>
       </View >
     </Modal >
@@ -1099,8 +1776,13 @@ const styles = StyleSheet.create({
     backgroundColor: "#E5E7EB",
   },
   defaultAvatar: {
-    backgroundColor: "#E5E7EB",
+    backgroundColor: "#F9FAFB", // much lighter
+    borderWidth: 1,
+    borderColor: "#E5E7EB",
+    justifyContent: "center",
+    alignItems: "center",
   },
+
   avatarText: {
     fontSize: 32,
     fontWeight: "700",
@@ -1259,17 +1941,24 @@ const styles = StyleSheet.create({
     marginTop: 10,
   },
   modalOverlay: {
-    flex: 1,
-    backgroundColor: "rgba(0,0,0,0.3)",
+    position: "absolute",
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: "rgba(0,0,0,0.4)",
     justifyContent: "center",
     alignItems: "center",
   },
+
   modalCard: {
     backgroundColor: "white",
     width: "85%",
+    maxHeight: "70%",
     padding: 20,
     borderRadius: 12,
   },
+
   modalTitle: {
     fontSize: 18,
     fontWeight: "700",
@@ -1439,6 +2128,117 @@ const styles = StyleSheet.create({
 
   dayTextActive: {
     color: "#fff",
+  },
+  cameraBadge: {
+    position: "absolute",
+    bottom: 0,
+    right: 0,
+    backgroundColor: "#2563EB",
+    borderRadius: 12,
+    padding: 4,
+  },
+  timePickerColumn: {
+    width: 80,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: "#E5E7EB",
+    marginHorizontal: 6,
+  },
+
+  timeOption: {
+    paddingVertical: 10,
+    alignItems: "center",
+  },
+
+  timeOptionSelected: {
+    backgroundColor: "#2563EB",
+    borderRadius: 6,
+  },
+
+  timeOptionText: {
+    fontSize: 16,
+    color: "#374151",
+  },
+
+  timeOptionTextSelected: {
+    color: "#FFFFFF",
+    fontWeight: "600",
+  },
+
+  timePreview: {
+    textAlign: "center",
+    fontSize: 18,
+    fontWeight: "600",
+    marginBottom: 12,
+    color: "#111827",
+  },
+  choiceBtn: {
+    flex: 1,
+    paddingVertical: 10,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: "#CBD5E1",
+    alignItems: "center",
+    marginRight: 6,
+  },
+
+  choiceBtnActive: {
+    backgroundColor: "#2563EB",
+    borderColor: "#2563EB",
+  },
+
+  choiceBtnText: {
+    fontWeight: "600",
+    color: "#374151",
+  },
+
+  choiceBtnTextActive: {
+    color: "#fff",
+  },
+
+  ioTime: {
+    fontWeight: "700",
+    color: "#1E3A8A",
+    marginBottom: 6,
+  },
+
+  ioGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    justifyContent: "space-between",
+  },
+
+  ioLabel: {
+    width: "48%",
+    fontSize: 12,
+    color: "#6B7280",
+  },
+
+  ioValue: {
+    width: "48%",
+    fontSize: 14,
+    fontWeight: "600",
+    color: "#111827",
+    marginBottom: 6,
+  },
+  vitalsGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+  },
+
+  vitalLabel: {
+    width: "45%",
+    fontSize: 13,
+    color: "#6B7280",
+    marginBottom: 6,
+  },
+
+  vitalValue: {
+    width: "55%",
+    fontSize: 14,
+    fontWeight: "600",
+    color: "#111827",
+    marginBottom: 6,
   },
 
 });

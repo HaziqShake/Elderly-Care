@@ -1,5 +1,4 @@
-// screens/HomeScreen.js
-import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { useFocusEffect } from "@react-navigation/native";
 import React, { useState, useEffect } from "react";
 import {
   View,
@@ -9,41 +8,116 @@ import {
   FlatList,
   TouchableOpacity,
   ActivityIndicator,
+  Modal,
 } from "react-native";
+import Toast from "react-native-toast-message";
+import { SafeAreaView } from "react-native-safe-area-context";
 import { MaterialIcons } from "@expo/vector-icons";
 import ResidentListItem from "../components/ResidentListItem";
 import ResidentCardModal from "../components/ResidentCardModal";
-import { SafeAreaView } from "react-native-safe-area-context";
 import { supabase } from "../supabase/supabaseClient";
 
-export default function HomeScreen({ navigation, user }) {
+export default function HomeScreen({ navigation }) {
+  const [confirmDeleteVisible, setConfirmDeleteVisible] = useState(false);
+  const [residentToDelete, setResidentToDelete] = useState(null);
+
+  const [editMode, setEditMode] = useState(false);
   const [residents, setResidents] = useState([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
   const [selectedResident, setSelectedResident] = useState(null);
 
-  // Fetch from Supabase
   useEffect(() => {
-    const fetchResidents = async () => {
-      try {
-        setLoading(true);
-
-        const { data: residentData, error } = await supabase
-          .from("residents")
-          .select("id, name, age, room_number, condition, photo_url");
-
-        if (error) throw error;
-
-        setResidents(residentData || []);
-      } catch (err) {
-        console.error("Error fetching residents:", err.message);
-      } finally {
-        setLoading(false);
-      }
-    };
-
     fetchResidents();
   }, []);
+  useFocusEffect(
+    React.useCallback(() => {
+      if (navigation.getState) {
+        const route = navigation.getState().routes.find(
+          (r) => r.name === "Home"
+        );
+
+        const newResident = route?.params?.newResident;
+
+        if (newResident) {
+          setResidents((prev) => {
+            const exists = prev.some((r) => r.id === newResident.id);
+            return exists ? prev : [newResident, ...prev];
+          });
+
+          // ✅ clear param so it doesn't re-add
+          navigation.setParams({ newResident: undefined });
+        }
+      }
+    }, [])
+  );
+
+
+  const fetchResidents = async () => {
+    try {
+      setLoading(true);
+      const { data, error } = await supabase
+        .from("residents")
+        .select("id, name, age, room_number, condition, photo_url");
+
+      if (error) throw error;
+      setResidents(data || []);
+    } catch (err) {
+      console.error("Error fetching residents:", err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleDeleteResident = async (resident) => {
+    const { error } = await supabase
+      .from("residents")
+      .delete()
+      .eq("id", resident.id);
+
+    if (error) {
+      console.error("Delete error:", error.message);
+      Toast.show({
+        type: "error",
+        text1: "Failed to delete resident",
+      });
+    } else {
+      setResidents((prev) =>
+        prev.filter((r) => r.id !== resident.id)
+      );
+      Toast.show({
+        type: "success",
+        text1: "Resident deleted",
+      });
+    }
+  };
+  const confirmDeleteResident = async () => {
+    if (!residentToDelete) return;
+
+    const { error } = await supabase
+      .from("residents")
+      .delete()
+      .eq("id", residentToDelete.id);
+
+    if (error) {
+      Toast.show({
+        type: "error",
+        text1: "Failed to delete resident",
+      });
+    } else {
+      setResidents((prev) =>
+        prev.filter((r) => r.id !== residentToDelete.id)
+      );
+      Toast.show({
+        type: "success",
+        text1: "Resident deleted",
+      });
+    }
+
+    setConfirmDeleteVisible(false);
+    setResidentToDelete(null);
+  };
+
 
   const filtered = residents.filter((r) =>
     r.name.toLowerCase().includes(search.toLowerCase())
@@ -58,30 +132,39 @@ export default function HomeScreen({ navigation, user }) {
   }
 
   return (
-    <SafeAreaView style={styles.container} edges={["top"]}>
-      {/* Floating header */}
+    <SafeAreaView style={styles.container}>
+      {/* Header */}
       <View style={styles.headerBar}>
         <Text style={styles.headerTitle}>Elderly Care</Text>
-        <TouchableOpacity
-          style={styles.profileBtn}
-          onPress={() => navigation.navigate("Settings")}
-        >
-          <MaterialIcons name="person" size={24} color="#3B82F6" />
+
+        <TouchableOpacity onPress={() => navigation.navigate("Settings")}>
+          <MaterialIcons name="person" size={24} color="#fff" />
         </TouchableOpacity>
-
-
       </View>
 
-      {/* Search bar */}
-      <View style={styles.searchBox}>
-        <MaterialIcons name="search" size={20} color="#6B7280" />
-        <TextInput
-          placeholder="Search resident..."
-          value={search}
-          onChangeText={setSearch}
-          style={styles.searchInput}
-          placeholderTextColor="#9CA3AF"
-        />
+      {/* Search + Edit */}
+      <View style={styles.searchRow}>
+        <View style={styles.searchBox}>
+          <MaterialIcons name="search" size={20} color="#6B7280" />
+          <TextInput
+            placeholder="Search resident..."
+            value={search}
+            onChangeText={setSearch}
+            style={styles.searchInput}
+            placeholderTextColor="#9CA3AF"
+          />
+        </View>
+
+        <TouchableOpacity
+          style={styles.editBtn}
+          onPress={() => setEditMode((p) => !p)}
+        >
+          <MaterialIcons
+            name={editMode ? "close" : "edit"}
+            size={22}
+            color={editMode ? "#DC2626" : "#3B82F6"}
+          />
+        </TouchableOpacity>
       </View>
 
       {/* Resident list */}
@@ -89,43 +172,103 @@ export default function HomeScreen({ navigation, user }) {
         data={filtered}
         keyExtractor={(i) => i.id}
         numColumns={3}
-        contentContainerStyle={{ padding: 12, paddingBottom: 80 }}
+        contentContainerStyle={{ padding: 12, paddingBottom: 120 }}
         columnWrapperStyle={{
           justifyContent: "space-between",
           marginBottom: 16,
         }}
         renderItem={({ item }) => (
-          <ResidentListItem
-            resident={item}
-            onPress={() => setSelectedResident(item)}
-            isGrid={true}
-          />
+          <View style={styles.gridItemWrapper}>
+            <ResidentListItem
+              resident={item}
+              onPress={() => !editMode && setSelectedResident(item)}
+              isGrid
+            />
+
+            {editMode && (
+              <TouchableOpacity
+                style={styles.deleteBadge}
+                onPress={() => {
+                  setResidentToDelete(item);
+                  setConfirmDeleteVisible(true);
+                }}
+
+              >
+                <MaterialIcons name="remove" size={18} color="#fff" />
+              </TouchableOpacity>
+            )}
+
+
+          </View>
         )}
+
       />
 
-      {/* Modal for resident */}
+      {/* Add button (EDIT MODE ONLY) */}
+      {editMode && (
+        <TouchableOpacity
+          style={styles.fab}
+          onPress={() =>
+            navigation.navigate("AddResident", {
+              onAdd: (newResident) => {
+                setResidents((prev) => [newResident, ...prev]);
+              },
+            })
+          }
+        >
+          <Text style={styles.fabIcon}>+</Text>
+        </TouchableOpacity>
+      )}
+
+      {/* Resident modal */}
       {selectedResident && (
         <ResidentCardModal
           resident={selectedResident}
           onClose={() => setSelectedResident(null)}
-          onUpdateResident={(updatedResident) => {
+          onUpdateResident={(updated) => {
             setResidents((prev) =>
-              prev.map((r) => (r.id === updatedResident.id ? updatedResident : r))
+              prev.map((r) => (r.id === updated.id ? updated : r))
             );
-            setSelectedResident(updatedResident);
+            setSelectedResident(updated);
           }}
+
         />
-
       )}
-      <TouchableOpacity
-        style={styles.fab}
-        onPress={() => navigation.navigate("AddResident")}
+      {/* DELETE CONFIRMATION MODAL */}
+      <Modal
+        visible={confirmDeleteVisible}
+        transparent
+        animationType="fade"
       >
-        <Text style={styles.fabIcon}>+</Text>
-      </TouchableOpacity>
+        <View style={styles.modalOverlay}>
+          <View style={styles.confirmCard}>
+            <Text style={styles.confirmTitle}>Delete Resident</Text>
+            <Text style={styles.confirmText}>
+              Are you sure you want to delete{" "}
+              {residentToDelete?.name}?
+            </Text>
 
+            <View style={styles.modalButtonsRow}>
+              <TouchableOpacity
+                style={styles.cancelBtn}
+                onPress={() => {
+                  setConfirmDeleteVisible(false);
+                  setResidentToDelete(null);
+                }}
+              >
+                <Text style={styles.cancelBtnText}>Cancel</Text>
+              </TouchableOpacity>
 
-
+              <TouchableOpacity
+                style={styles.deleteBtn}
+                onPress={confirmDeleteResident}
+              >
+                <Text style={styles.deleteBtnText}>Delete</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -133,77 +276,125 @@ export default function HomeScreen({ navigation, user }) {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: "#F7F8FB" },
 
-
-  // Header
   headerBar: {
-    marginTop: 10,
-    marginHorizontal: 12,
-    marginBottom: 16,
+    margin: 12,
     backgroundColor: "#3B82F6",
     padding: 14,
     borderRadius: 16,
     flexDirection: "row",
-    alignItems: "center",
     justifyContent: "space-between",
-    shadowColor: "#000",
-    shadowOpacity: 0.1,
-    shadowRadius: 6,
-    elevation: 4,
+    alignItems: "center",
   },
   headerTitle: {
     fontSize: 20,
     fontWeight: "700",
-    color: "#ffffffff",
-  },
-  profileBtn: {
-    backgroundColor: "#E0ECFF",
-    padding: 8,
-    borderRadius: 20,
+    color: "#fff",
   },
 
-  // Search bar
+  searchRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginHorizontal: 16,
+    marginBottom: 12,
+  },
   searchBox: {
+    flex: 1,
     flexDirection: "row",
     alignItems: "center",
     backgroundColor: "#fff",
-    marginHorizontal: 16,
-    marginBottom: 12,
     paddingHorizontal: 12,
     borderRadius: 12,
     borderWidth: 1,
     borderColor: "#E5E7EB",
   },
-  searchInput: { flex: 1, padding: 8, fontSize: 15, color: "#111" },
-  addResidentButton: {
-    position: "absolute",
-    left: 16,
-    right: 16,
-    bottom: 80, // sits ABOVE tab bar
-    backgroundColor: "#2563EB",
-    paddingVertical: 14,
-    borderRadius: 14,
-    alignItems: "center",
-    elevation: 6,
+  searchInput: { flex: 1, padding: 8, fontSize: 15 },
+  editBtn: {
+    marginLeft: 10,
+    padding: 10,
+    backgroundColor: "#E0ECFF",
+    borderRadius: 10,
   },
+
+  deleteBadge: {
+    position: "absolute",
+    top: -6,
+    right: -6,
+    zIndex: 10,
+    backgroundColor: "#DC2626",
+    borderRadius: 12,
+    padding: 4,
+  },
+
   fab: {
     position: "absolute",
     right: 20,
-    bottom: 90, // safely above bottom nav
+    bottom: 90,
     width: 56,
     height: 56,
     borderRadius: 28,
     backgroundColor: "#2563EB",
     alignItems: "center",
     justifyContent: "center",
-    elevation: 6, // Android shadow
+    elevation: 6,
   },
-
   fabIcon: {
     color: "#fff",
     fontSize: 32,
     fontWeight: "600",
-    marginTop: -2, // visually center "+"
+  },
+  gridItemWrapper: {
+    flex: 1,
+    position: "relative",
+    alignItems: "center",
+  },
+  confirmCard: {
+    backgroundColor: "#fff",
+    padding: 20,
+    borderRadius: 12,
+    width: "85%",
   },
 
+  confirmTitle: {
+    fontSize: 18,
+    fontWeight: "600",
+    marginBottom: 8,
+    textAlign: "center",
+  },
+
+  confirmText: {
+    fontSize: 14,
+    color: "#374151",
+    textAlign: "center",
+    marginBottom: 16,
+  },
+
+  deleteBtn: {
+    flex: 1,
+    backgroundColor: "#DC2626",
+    paddingVertical: 12,
+    borderRadius: 8,
+    alignItems: "center",
+    marginLeft: 6,
+  },
+
+
+  deleteBtnText: {
+    color: "#FFFFFF",
+    fontWeight: "600",
+  },
+  modalButtonsRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginTop: 16,
+  },
+  cancelBtn: {
+    flex: 1,
+    backgroundColor: "#E5E7EB",
+    paddingVertical: 12,
+    borderRadius: 8,
+    alignItems: "center",
+    marginRight: 6,
+  },
 
 });

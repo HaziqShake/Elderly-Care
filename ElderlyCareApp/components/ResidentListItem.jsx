@@ -1,8 +1,15 @@
-import React from "react";
-import { View, Text,Image, TouchableOpacity, StyleSheet } from "react-native";
+import React, { useState, useEffect } from "react";
+import { MaterialIcons } from "@expo/vector-icons";
+import { View, Text, Image, TouchableOpacity, StyleSheet } from "react-native";
 
 export default function ResidentListItem({ resident, onPress, isGrid }) {
   const initial = resident.name?.charAt(0)?.toUpperCase() || "?";
+  const [imageError, setImageError] = useState(false);
+  useEffect(() => {
+    setImageError(false);
+  }, [resident.photo_url]);
+
+
 
   return (
     <TouchableOpacity
@@ -13,36 +20,46 @@ export default function ResidentListItem({ resident, onPress, isGrid }) {
       onPress={onPress}
     >
       {/* AVATAR */}
-      {resident.photo_url ? (
+      {resident.photo_url && !imageError ? (
         <Image
+          key={resident.photo_url} // ✅ force refresh when URL changes
           source={{ uri: resident.photo_url }}
           style={[
             styles.avatar,
             isGrid ? styles.avatarGrid : styles.avatarList,
           ]}
+          onError={() => setImageError(true)}
         />
       ) : (
         <View
           style={[
             styles.avatar,
             isGrid ? styles.avatarGrid : styles.avatarList,
+            {
+              backgroundColor: "#E5E7EB",
+              justifyContent: "center",
+              alignItems: "center",
+            },
           ]}
         >
-          <Text style={styles.avatarText}>{initial}</Text>
+          <MaterialIcons
+            name="person-outline"
+            size={isGrid ? 32 : 24}
+            color="#6B7280"
+          />
         </View>
       )}
 
 
       {/* NAME */}
-      <Text
-        style={[
-          styles.name,
-          !isGrid && { marginLeft: 12 },
-        ]}
-        numberOfLines={1}
-      >
-        {resident.name}
-      </Text>
+      <View style={styles.nameContainer}>
+        <Text style={styles.name}>
+          {resident.name}
+        </Text>
+      </View>
+
+
+
 
       {/* PENDING BADGE */}
       {resident.pendingCount > 0 && (
@@ -63,7 +80,7 @@ const styles = StyleSheet.create({
     marginBottom: 16,
   },
   gridCard: {
-    width: "30%",
+    width: "100%",
     alignItems: "center",
   },
   listCard: {
@@ -90,19 +107,25 @@ const styles = StyleSheet.create({
     borderRadius: 24,
   },
   avatarText: {
-    fontSize: 28,
-    fontWeight: "700",
+    fontSize: 24,
+    fontWeight: "400",
     color: "#6B7280",
   },
 
   /* ---------- NAME ---------- */
+  nameContainer: {
+    width: "100%",          // ⭐ gives text full card width
+    paddingHorizontal: 4,   // small breathing room
+  },
+
   name: {
-    fontSize: 13,
+    fontSize: 12,
     fontWeight: "600",
     color: "#111",
     textAlign: "center",
-    flexShrink: 1,
+    lineHeight: 14,
   },
+
 
   /* ---------- BADGE ---------- */
   badge: {
@@ -119,4 +142,6 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: "700",
   },
+
+
 });

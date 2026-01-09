@@ -1,10 +1,13 @@
-import React, { useEffect, useState } from "react";
-import { View, Text, StyleSheet, TouchableOpacity, Alert } from "react-native";
+import { useNavigation } from "@react-navigation/native";
+import React, { useEffect, useState} from "react";
+import { View, Text, StyleSheet, TouchableOpacity, Modal} from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { MaterialIcons } from "@expo/vector-icons";
 import { supabase } from "../supabase/supabaseClient";
 
 export default function SettingsScreen() {
+  const [confirmLogoutVisible, setConfirmLogoutVisible] = useState(false);
+  const navigation = useNavigation();
   const [email, setEmail] = useState(null);
 
   useEffect(() => {
@@ -19,27 +22,26 @@ export default function SettingsScreen() {
     loadUser();
   }, []);
 
-  const handleLogout = () => {
-    Alert.alert(
-      "Log out",
-      "Are you sure you want to log out?",
-      [
-        { text: "Cancel", style: "cancel" },
-        {
-          text: "Log out",
-          style: "destructive",
-          onPress: async () => {
-            await supabase.auth.signOut();
-          },
-        },
-      ]
-    );
-  };
+const handleLogout = () => {
+  setConfirmLogoutVisible(true);
+};
+
+const confirmLogout = async () => {
+  await supabase.auth.signOut();
+  setConfirmLogoutVisible(false);
+};
 
   return (
     <SafeAreaView style={styles.safe}>
       <View style={styles.container}>
+
         {/* Header */}
+        <TouchableOpacity onPress={() => navigation.goBack()}>
+          <Text style={{ color: "#2563EB", marginBottom: 12, fontSize: 16 }}>
+            ← Back
+          </Text>
+        </TouchableOpacity>
+
         <Text style={styles.title}>Settings</Text>
 
         {/* Profile Card */}
@@ -68,6 +70,38 @@ export default function SettingsScreen() {
           <Text style={styles.footerSub}>Version 1.0</Text>
         </View>
       </View>
+      {/* LOGOUT CONFIRMATION MODAL */}
+<Modal
+  visible={confirmLogoutVisible}
+  transparent
+  animationType="fade"
+>
+  <View style={styles.modalOverlay}>
+    <View style={styles.confirmCard}>
+      <Text style={styles.confirmTitle}>Log out</Text>
+      <Text style={styles.confirmText}>
+        Are you sure you want to log out?
+      </Text>
+
+      <View style={styles.modalButtonsRow}>
+        <TouchableOpacity
+          style={styles.cancelBtn}
+          onPress={() => setConfirmLogoutVisible(false)}
+        >
+          <Text style={styles.cancelBtnText}>Cancel</Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          style={styles.logoutBtn}
+          onPress={confirmLogout}
+        >
+          <Text style={styles.logoutBtnText}>Log out</Text>
+        </TouchableOpacity>
+      </View>
+    </View>
+  </View>
+</Modal>
+
     </SafeAreaView>
   );
 }
@@ -137,4 +171,69 @@ const styles = StyleSheet.create({
     color: "#9CA3AF",
     marginTop: 2,
   },
+  modalOverlay: {
+  position: "absolute",
+  top: 0,
+  left: 0,
+  right: 0,
+  bottom: 0,
+  backgroundColor: "rgba(0,0,0,0.4)",
+  justifyContent: "center",
+  alignItems: "center",
+},
+
+confirmCard: {
+  backgroundColor: "#fff",
+  padding: 20,
+  borderRadius: 12,
+  width: "85%",
+},
+
+confirmTitle: {
+  fontSize: 18,
+  fontWeight: "600",
+  marginBottom: 8,
+  textAlign: "center",
+},
+
+confirmText: {
+  fontSize: 14,
+  color: "#374151",
+  textAlign: "center",
+  marginBottom: 16,
+},
+
+modalButtonsRow: {
+  flexDirection: "row",
+  justifyContent: "space-between",
+},
+
+cancelBtn: {
+  flex: 1,
+  backgroundColor: "#E5E7EB",
+  paddingVertical: 12,
+  borderRadius: 8,
+  alignItems: "center",
+  marginRight: 6,
+},
+
+cancelBtnText: {
+  color: "#374151",
+  fontWeight: "500",
+},
+
+logoutBtn: {
+  flex: 1,
+  backgroundColor: "#DC2626",
+  paddingVertical: 12,
+  borderRadius: 8,
+  alignItems: "center",
+  marginLeft: 6,
+},
+
+logoutBtnText: {
+  color: "#FFFFFF",
+  fontWeight: "600",
+},
+
 });

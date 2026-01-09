@@ -1,8 +1,9 @@
 // screens/EditResidentScreen.jsx
 import { SafeAreaView } from "react-native-safe-area-context";
 import React, { useState } from "react";
-import { View, Text, TextInput, TouchableOpacity, StyleSheet, Alert } from "react-native";
+import { View, Text, TextInput, TouchableOpacity, StyleSheet } from "react-native";
 import { supabase } from "../supabase/supabaseClient";
+import Toast from "react-native-toast-message";
 
 export default function EditResidentScreen({ route, navigation }) {
   const { resident } = route.params;
@@ -37,31 +38,39 @@ export default function EditResidentScreen({ route, navigation }) {
 
     if (error) {
       console.error("Update error:", error.message);
-      Alert.alert("Error", "Failed to update resident.");
+      Toast.show({
+        type: "error",
+        text1: "Failed to update resident",
+      });
     } else {
-      Alert.alert("Success", "Resident updated successfully.");
+      Toast.show({
+        type: "success",
+        text1: "Resident updated successfully",
+      });
       navigation.goBack();
     }
+
   };
 
   const handleDelete = async () => {
-    Alert.alert("Confirm", "Are you sure you want to delete this resident?", [
-      { text: "Cancel", style: "cancel" },
-      {
-        text: "Delete",
-        style: "destructive",
-        onPress: async () => {
-          const { error } = await supabase.from("residents").delete().eq("id", resident.id);
-          if (error) {
-            console.error("Delete error:", error.message);
-            Alert.alert("Error", "Failed to delete resident.");
-          } else {
-            Alert.alert("Deleted", "Resident removed.");
-            navigation.goBack();
-          }
-        },
-      },
-    ]);
+    const { error } = await supabase
+      .from("residents")
+      .delete()
+      .eq("id", resident.id);
+
+    if (error) {
+      console.error("Delete error:", error.message);
+      Toast.show({
+        type: "error",
+        text1: "Failed to delete resident",
+      });
+    } else {
+      Toast.show({
+        type: "success",
+        text1: "Resident deleted",
+      });
+      navigation.goBack();
+    }
   };
 
   return (

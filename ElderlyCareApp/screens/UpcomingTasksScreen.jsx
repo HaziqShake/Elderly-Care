@@ -26,17 +26,24 @@ export default function UpcomingTasksScreen() {
         .select(
           `id, resident_id, scheduled_time, status,
            residents(name),
-           activities(label, type)`
+           activities(label, type,repeat_days)`
         )
         .eq("date", today)
         .eq("status", "pending")
         .order("scheduled_time", { ascending: true });
 
       if (error) throw error;
+      const weekday = new Date().getDay();
 
-      setTasks(
-        (data || []).filter((t) => t.scheduled_time) // ignore untimed
-      );
+      const filtered = (data || []).filter((t) => {
+        const repeatDays = t.activities?.repeat_days;
+        if (!Array.isArray(repeatDays) || repeatDays.length === 0) return true;
+        return repeatDays.includes(weekday);
+      });
+
+      setTasks(filtered.filter((t) => t.scheduled_time));
+      return;
+
     } catch (err) {
       console.error("fetchTasks error:", err.message || err);
       setTasks([]);
@@ -100,7 +107,13 @@ export default function UpcomingTasksScreen() {
           )}
 
           <Text style={styles.residentName}>👵 {residentLabel}</Text>
-          <Text style={styles.time}>⏰ {item.scheduled_time.slice(0, 5)}</Text>
+          <Text style={styles.time}>
+            ⏰ {new Date(`1970-01-01T${item.scheduled_time}`).toLocaleTimeString([], {
+              hour: "numeric",
+              minute: "2-digit",
+              hour12: true,
+            })}
+          </Text>
         </View>
       </View>
     );
