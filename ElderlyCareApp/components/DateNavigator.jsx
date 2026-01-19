@@ -1,7 +1,6 @@
 import React, { useState } from "react";
-import { View, Text, TouchableOpacity } from "react-native";
+import { View, Text, TouchableOpacity, Modal, ScrollView } from "react-native";
 import { MaterialIcons } from "@expo/vector-icons";
-import DateTimePicker from "@react-native-community/datetimepicker";
 import moment from "moment";
 
 export default function DateNavigator({ date, onChange }) {
@@ -9,16 +8,34 @@ export default function DateNavigator({ date, onChange }) {
 
   const today = moment().startOf("day");
   const current = moment(date).startOf("day");
-
   const isToday = current.isSame(today);
 
-  const goPrev = () => {
-    onChange(current.clone().subtract(1, "day").toDate());
+  const goPrev = () => onChange(current.clone().subtract(1, "day").toDate());
+  const goNext = () => {
+    if (!isToday) onChange(current.clone().add(1, "day").toDate());
   };
 
-  const goNext = () => {
-    if (isToday) return;
-    onChange(current.clone().add(1, "day").toDate());
+  // Generate picker data
+  const days = Array.from({ length: 31 }, (_, i) => i + 1);
+  const months = moment.months();
+  const years = [];
+  for (let y = today.year(); y >= today.year() - 5; y--) years.push(y);
+
+  const [tempDay, setTempDay] = useState(current.date());
+  const [tempMonth, setTempMonth] = useState(current.month());
+  const [tempYear, setTempYear] = useState(current.year());
+
+  const confirmDate = () => {
+    const picked = moment()
+      .year(tempYear)
+      .month(tempMonth)
+      .date(tempDay)
+      .startOf("day");
+
+    if (!picked.isAfter(today)) {
+      onChange(picked.toDate());
+    }
+    setShowPicker(false);
   };
 
   return (
@@ -30,12 +47,12 @@ export default function DateNavigator({ date, onChange }) {
         marginBottom: 12,
       }}
     >
-      {/* Previous day */}
+      {/* Prev */}
       <TouchableOpacity onPress={goPrev} style={{ padding: 6 }}>
         <MaterialIcons name="chevron-left" size={30} color="#2563EB" />
       </TouchableOpacity>
 
-      {/* Date label / picker */}
+      {/* Date pill */}
       <TouchableOpacity
         onPress={() => setShowPicker(true)}
         style={{
@@ -50,7 +67,7 @@ export default function DateNavigator({ date, onChange }) {
         </Text>
       </TouchableOpacity>
 
-      {/* Next day (disabled for future) */}
+      {/* Next */}
       <TouchableOpacity
         onPress={goNext}
         disabled={isToday}
@@ -59,24 +76,97 @@ export default function DateNavigator({ date, onChange }) {
         <MaterialIcons name="chevron-right" size={30} color="#2563EB" />
       </TouchableOpacity>
 
-      {/* Calendar picker (future dates blocked) */}
-      {showPicker && (
-        <DateTimePicker
-          value={current.toDate()}
-          mode="date"
-          display="calendar"
-          maximumDate={today.toDate()} // 🔒 BLOCK FUTURE DATES
-          onChange={(e, picked) => {
-            setShowPicker(false);
-            if (picked) {
-              const pickedDay = moment(picked).startOf("day");
-              if (!pickedDay.isAfter(today)) {
-                onChange(pickedDay.toDate());
-              }
-            }
+      {/* Custom Date Picker Modal */}
+      <Modal visible={showPicker} transparent animationType="fade">
+        <View
+          style={{
+            flex: 1,
+            backgroundColor: "rgba(0,0,0,0.4)",
+            justifyContent: "center",
+            alignItems: "center",
           }}
-        />
-      )}
+        >
+          <View
+            style={{
+              backgroundColor: "white",
+              padding: 20,
+              borderRadius: 12,
+              width: 300,
+            }}
+          >
+            <Text style={{ fontWeight: "700", marginBottom: 10 }}>
+              Select Date
+            </Text>
+
+            <View style={{ flexDirection: "row", justifyContent: "space-between" }}>
+              {/* Day */}
+              <ScrollView style={{ height: 150 }}>
+                {days.map((d) => (
+                  <TouchableOpacity key={d} onPress={() => setTempDay(d)}>
+                    <Text
+                      style={{
+                        padding: 6,
+                        textAlign: "center",
+                        fontWeight: d === tempDay ? "700" : "400",
+                        color: d === tempDay ? "#2563EB" : "#000",
+                      }}
+                    >
+                      {d}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </ScrollView>
+
+              {/* Month */}
+              <ScrollView style={{ height: 150 }}>
+                {months.map((m, idx) => (
+                  <TouchableOpacity key={m} onPress={() => setTempMonth(idx)}>
+                    <Text
+                      style={{
+                        padding: 6,
+                        textAlign: "center",
+                        fontWeight: idx === tempMonth ? "700" : "400",
+                        color: idx === tempMonth ? "#2563EB" : "#000",
+                      }}
+                    >
+                      {m}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </ScrollView>
+
+              {/* Year */}
+              <ScrollView style={{ height: 150 }}>
+                {years.map((y) => (
+                  <TouchableOpacity key={y} onPress={() => setTempYear(y)}>
+                    <Text
+                      style={{
+                        padding: 6,
+                        textAlign: "center",
+                        fontWeight: y === tempYear ? "700" : "400",
+                        color: y === tempYear ? "#2563EB" : "#000",
+                      }}
+                    >
+                      {y}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </ScrollView>
+            </View>
+
+            {/* Buttons */}
+            <View style={{ flexDirection: "row", justifyContent: "flex-end", marginTop: 12 }}>
+              <TouchableOpacity onPress={() => setShowPicker(false)}>
+                <Text style={{ marginRight: 16, color: "#6B7280" }}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity onPress={confirmDate}>
+                <Text style={{ color: "#2563EB", fontWeight: "700" }}>Done</Text>
+              </TouchableOpacity>
+            </View>
+
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }

@@ -232,9 +232,54 @@ export default function ResidentCardModal({ resident, onClose, onUpdateResident 
   // Fetch today's daily_task_instances for this resident
   const fetchTasks = async () => {
     setLoadingTasks(true);
-    try {
-      const dateStr = selectedDate.toISOString().split("T")[0];
 
+    try {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+
+      if (!user) return;
+
+      const dateStr = selectedDate.toISOString().split("T")[0];
+      const weekday = selectedDate.getDay();
+
+      // 1️⃣ Fetch resident linked activities
+      const { data: residentActs, error: raErr } = await supabase
+        .from("resident_activities")
+        .select("activity_id, scheduled_time, activities(label, repeat_days)")
+        .eq("resident_id", resident.id)
+        .eq("owner_id", user.id);
+
+      if (raErr) throw raErr;
+
+      // 2️⃣ Ensure daily_task_instances exist for this date
+      for (const ra of residentActs || []) {
+        const repeatDays = ra.activities?.repeat_days || [];
+
+        // Skip if repeat_days set and weekday not included
+        if (repeatDays.length > 0 && !repeatDays.includes(weekday)) continue;
+
+        const { data: existing } = await supabase
+          .from("daily_task_instances")
+          .select("id")
+          .eq("resident_id", resident.id)
+          .eq("activity_id", ra.activity_id)
+          .eq("date", dateStr)
+          .maybeSingle();
+
+        if (!existing) {
+          await supabase.from("daily_task_instances").insert({
+            resident_id: resident.id,
+            activity_id: ra.activity_id,
+            scheduled_time: ra.scheduled_time,
+            date: dateStr,
+            status: "pending",
+            owner_id: user.id,
+          });
+        }
+      }
+
+      // 3️⃣ Load daily instances for UI
       const { data, error } = await supabase
         .from("daily_task_instances")
         .select("id, activity_id, status, scheduled_time, activities(label, repeat_days)")
@@ -242,30 +287,19 @@ export default function ResidentCardModal({ resident, onClose, onUpdateResident 
         .eq("date", dateStr)
         .order("scheduled_time", { ascending: true });
 
-
       if (error) throw error;
+
       const formatted = (data || []).map((row) => ({
         id: row.id,
         activity_id: row.activity_id,
         label: row.activities?.label || "Unnamed Task",
         status: row.status || "pending",
-        scheduled_time: row.scheduled_time || null,
-        repeat_days: row.activities?.repeat_days || [],
-        isNew: false,
+        scheduled_time: row.scheduled_time,
+          repeatDays: row.activities?.repeat_days || [],   
+
       }));
 
-      const weekday = selectedDate.getDay();
-
-      const filtered = formatted.filter((t) => {
-        const repeatDays = t.repeat_days;
-        if (!Array.isArray(repeatDays) || repeatDays.length === 0) return true;
-        return repeatDays.includes(weekday);
-      });
-
-      setTasks(filtered);
-      return;
-
-
+      setTasks(formatted);
     } catch (err) {
       console.error("Error fetching daily tasks:", err.message || err);
       Toast.show({ type: "error", text1: "Could not load tasks" });
@@ -273,6 +307,7 @@ export default function ResidentCardModal({ resident, onClose, onUpdateResident 
       setLoadingTasks(false);
     }
   };
+
 
   useEffect(() => {
     // seed form and clear task deletion list
@@ -876,52 +911,101 @@ export default function ResidentCardModal({ resident, onClose, onUpdateResident 
                 <Text style={{ color: "#6B7280", marginTop: 6 }}>No tasks assigned.</Text>
               ) : (
                 tasks.map((item) => (
-                  <View key={item.id} style={styles.taskRow}>
-                    {/* CHECK/UNCHECK */}
-                    {!editTasks ? (
-                      <TouchableOpacity
+                  <View
+                    key={item.id}
+                    style={{
+                      backgroundColor: "#EFF6FF",
+                      padding: 12,
+                      borderRadius: 10,
+                      marginBottom: 8,
+                      flexDirection: "row",
+                      alignItems: "center",
+                    }}
+                  >
+                    {/* Status toggle */}
+                    {!editTasks && (
+                      <Pressable
                         onPress={() => {
                           if (!isToday) return;
                           toggleSpecificTaskStatus(item);
                         }}
-                        style={{ marginRight: 10, opacity: !isToday ? 0.4 : 1 }}
+                        style={{ opacity: !isToday ? 0.4 : 1 }}
                       >
-
                         <MaterialIcons
                           name={item.status === "done" ? "check-circle" : "radio-button-unchecked"}
                           size={26}
-                          color={item.status === "done" ? "#16A34A" : "#9CA3AF"}
+                          color={item.status === "done" ? "#22C55E" : "#CBD5E1"}
                         />
-                      </TouchableOpacity>
-                    ) : null}
+                      </Pressable>
+                    )}
 
-                    {/* LABEL + TIME */}
-                    <View style={{ flex: 1 }}>
-                      <Text style={[styles.taskText, item.status === "done" && { textDecorationLine: "line-through", color: "#6B7280" }]}>
-                        {item.label}
-                      </Text>
-                      <Text style={{ fontSize: 12, color: "#6B7280" }}>
-                        ⏰ {moment(item.scheduled_time, "HH:mm:ss").format("h:mm A")}
-                      </Text>
+                    {/* Text block */}
+                    <View style={{ flex: 1, marginLeft: 12, marginRight: 10 }}>
+                      {/* Label + Time */}
+                      <View style={{ flexDirection: "row", justifyContent: "space-between" }}>
+                        <Text
+                          style={{
+                            fontSize: 15,
+                            fontWeight: "600",
+                            color: "#111827",
+                            flexWrap: "wrap",
+                            flex: 1,
+                            paddingRight: 6,
+                          }}
+                        >
+                          {item.label}
+                        </Text>
+
+
+                        <Text style={{ fontSize: 13, fontWeight: "600", color: "#2563EB" }}>
+                          {moment(item.scheduled_time, "HH:mm:ss").format("h:mm A")}
+                        </Text>
+                      </View>
+
+                      {/* Repeat days indicator */}
+                      <View style={{ flexDirection: "row", marginTop: 4 }}>
+                        {["S", "M", "T", "W", "T", "F", "S"].map((d, idx) => (
+                          <Text
+                            key={idx}
+                            style={{
+                              fontSize: 12,
+                              marginRight: 6,
+                              fontWeight: "600",
+                              color: (item.repeatDays || []).includes(idx)
+                                ? "#2563EB"
+                                : "#9CA3AF",
+                            }}
+                          >
+                            {d}
+                          </Text>
+                        ))}
+                      </View>
                     </View>
 
-                    {/* EDIT MODE ACTIONS */}
+                    {/* Action icons column */}
                     {editTasks && isToday && (
-                      <View style={{ flexDirection: "row", alignItems: "center" }}>
-
-                        <TouchableOpacity onPress={() => openEditSpecificTask(item)} style={{ marginRight: 12 }}>
+                      <View
+                        style={{
+                          width: 60,
+                          flexDirection: "row",
+                          justifyContent: "flex-end",
+                          alignItems: "center",
+                          gap: 10,
+                        }}
+                      >
+                        <Pressable onPress={() => openEditSpecificTask(item)}>
                           <MaterialIcons name="edit" size={22} color="#2563EB" />
-                        </TouchableOpacity>
+                        </Pressable>
 
-                        <TouchableOpacity onPress={() => deleteSpecificTask(item)}>
-                          <MaterialIcons name="delete" size={22} color="#ef4444" />
-                        </TouchableOpacity>
+                        <Pressable onPress={() => deleteSpecificTask(item)}>
+                          <MaterialIcons name="delete" size={22} color="#DC2626" />
+                        </Pressable>
                       </View>
                     )}
                   </View>
                 ))
-              )}
 
+              )}
               {/* ADD BUTTON (EDIT MODE ONLY) */}
               {editTasks && isToday && (
                 <TouchableOpacity style={styles.addButton} onPress={openAddSpecificTask}>

@@ -319,41 +319,104 @@ export default function TasksScreen() {
      LOAD COMMON TASKS
   --------------------------------------------------- */
   const loadTasks = async () => {
-    const { data, error } = await supabase
-      .from("daily_task_instances")
-      .select(`
+    try {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+
+      if (!user) return;
+
+      const selectedStr = selectedDate.toISOString().split("T")[0];
+      const weekday = new Date(selectedStr).getDay();
+
+      // 1) Fetch all common activities
+      const { data: activities, error: actErr } = await supabase
+        .from("activities")
+        .select("id, label, default_time, repeat_days")
+        .eq("type", "common")
+        .eq("owner_id", user.id);
+
+      if (actErr) throw actErr;
+
+      // 2) Ensure daily_task_instances exist for this date
+      for (const act of activities || []) {
+        const repeatDays = act.repeat_days || [];
+
+        // Skip if repeat days set and today not included
+        if (repeatDays.length > 0 && !repeatDays.includes(weekday)) continue;
+
+        // Check if instance exists
+        const { data: existing, error: existErr } = await supabase
+          .from("daily_task_instances")
+          .select("id")
+          .eq("activity_id", act.id)
+          .eq("date", selectedStr)
+          .is("resident_id", null)
+          .maybeSingle();
+
+        if (existErr) throw existErr;
+
+        // Create if missing
+        if (!existing) {
+          const { error: insertErr } = await supabase
+            .from("daily_task_instances")
+            .insert({
+              activity_id: act.id,
+              resident_id: null,
+              scheduled_time: act.default_time,
+              date: selectedStr,
+              status: "pending",
+              owner_id: user.id,
+            });
+
+          if (insertErr) throw insertErr;
+        }
+      }
+
+      // 3) Load daily instances for UI
+      const { data: tasks, error: taskErr } = await supabase
+        .from("daily_task_instances")
+        .select(
+          `
         id,
-        scheduled_time,
-        status,
         activity_id,
-        activities(label, repeat_days)
-      `)
-      .eq("date", selectedStr)
-      .is("resident_id", null)
-      .order("scheduled_time", { ascending: true });
-    const weekday = new Date(selectedStr).getDay();
+        status,
+        scheduled_time,
+        activities(label,repeat_days)
+      `
+        )
+        .eq("date", selectedStr)
+        .is("resident_id", null)
+        .eq("owner_id", user.id)
+        .order("scheduled_time", { ascending: true });
 
-    const filtered = (data || []).filter((t) => {
-      const repeatDays = t.activities?.repeat_days;
-      if (!Array.isArray(repeatDays) || repeatDays.length === 0) return true;
-      return repeatDays.includes(weekday);
-    });
+      if (taskErr) throw taskErr;
+
+      // 4) Map into your UI format
+      const formatted = (tasks || []).map((t) => {
+        const repeatDays = t.activities.repeat_days || [];
+
+        const repeatDaysArray =
+          repeatDays.length > 0 ? repeatDays : [0, 1, 2, 3, 4, 5, 6]; // everyday
 
 
-    if (!error && data) {
-      setCommonTasks(
-        filtered.map((t) => ({
+        return {
           id: t.id,
           activity_id: t.activity_id,
-          label: t.activities?.label ?? "",
-          scheduled_time: t.scheduled_time,
-          repeat_days: t.activities?.repeat_days,
-          timeDisplay: t.scheduled_time
-            ? moment(t.scheduled_time, "HH:mm:ss").format("h:mm A")
-            : "—",
+          label: t.activities.label,
           status: t.status,
-        }))
-      );
+          scheduled_time: t.scheduled_time,        // ✅ add
+          repeat_days: t.activities.repeat_days,   // ✅ add
+          timeDisplay: moment(t.scheduled_time, "HH:mm:ss").format("h:mm A"),
+          repeatDays: repeatDaysArray,
+        };
+
+
+      });
+
+      setCommonTasks(formatted);
+    } catch (err) {
+      console.error("Load tasks error:", err.message || err);
     }
   };
 
@@ -456,7 +519,7 @@ export default function TasksScreen() {
         .from("daily_task_instances")
         .update({ scheduled_time: timeSql })
         .eq("activity_id", editingTask.activity_id)
-        .eq("date", todayStr)
+        .eq("date", selectedStr)
         .eq("owner_id", user.id);
     }
 
@@ -509,42 +572,94 @@ export default function TasksScreen() {
      UI
   --------------------------------------------------- */
   const renderTask = ({ item }) => (
-    <View style={styles.taskRow}>
+    <View
+      style={{
+        backgroundColor: "#EFF6FF",
+        padding: 12,
+        borderRadius: 10,
+        marginBottom: 8,
+        flexDirection: "row",
+        alignItems: "center",
+      }}
+    >
+      {/* Status toggle */}
       <Pressable
         onPress={() => toggleCommonTask(item)}
         style={!isToday && { opacity: 0.4 }}
       >
         <MaterialIcons
           name={item.status === "done" ? "check-circle" : "radio-button-unchecked"}
-          size={28}
+          size={26}
           color={item.status === "done" ? "#22C55E" : "#CBD5E1"}
         />
       </Pressable>
 
-      <View style={{ flex: 1, marginLeft: 12 }}>
-        <Text style={styles.taskLabel}>{item.label}</Text>
-        <Text style={styles.taskTime}>{item.timeDisplay}</Text>
+      {/* Text block */}
+      <View style={{ flex: 1, marginLeft: 12, marginRight: 10 }}>
+        {/* Label + Time */}
+        <View style={{ flexDirection: "row", justifyContent: "space-between" }}>
+          <Text
+            style={{
+              fontSize: 15,
+              fontWeight: "600",
+              color: "#111827",
+              flexWrap: "wrap",
+              flex: 1,
+              paddingRight: 6,
+            }}
+          >
+            {item.label}
+          </Text>
+
+
+          <Text style={{ fontSize: 13, fontWeight: "600", color: "#2563EB" }}>
+            {item.timeDisplay}
+          </Text>
+        </View>
+
+        {/* Repeat days row */}
+        <View style={{ flexDirection: "row", marginTop: 4 }}>
+          {["S", "M", "T", "W", "T", "F", "S"].map((d, idx) => (
+            <Text
+              key={idx}
+              style={{
+                fontSize: 12,
+                marginRight: 6,
+                fontWeight: "600",
+                color: item.repeatDays.includes(idx) ? "#2563EB" : "#9CA3AF",
+              }}
+            >
+              {d}
+            </Text>
+          ))}
+        </View>
       </View>
 
+      {/* Action icons column */}
       {editMode && (
-        <View style={{ flexDirection: "row", alignItems: "center" }}>
+        <View
+          style={{
+            width: 60,
+            flexDirection: "row",
+            justifyContent: "flex-end",
+            alignItems: "center",
+            gap: 10,
+          }}
+        >
           <Pressable
             onPress={() => {
               setEditingTask(item);
               setModalVisible(true);
             }}
-            style={{ marginRight: 12 }}
           >
-            <MaterialIcons name="edit" size={24} color="#2563EB" />
+            <MaterialIcons name="edit" size={22} color="#2563EB" />
           </Pressable>
 
           <Pressable onPress={() => deleteCommonTask(item)}>
-
-            <MaterialIcons name="delete" size={24} color="#DC2626" />
+            <MaterialIcons name="delete" size={22} color="#DC2626" />
           </Pressable>
         </View>
       )}
-
     </View>
   );
 
