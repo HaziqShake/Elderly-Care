@@ -120,6 +120,7 @@ export default function AddResidentScreen({ navigation }) {
           { key: "condition", label: "Condition" },
           { key: "guardian_name", label: "Guardian Name" },
           { key: "guardian_contact", label: "Guardian Contact" },
+          { key: "photo_url", label: "Photo URL" },
         ].map((field) => (
           <TextInput
             key={field.key}
