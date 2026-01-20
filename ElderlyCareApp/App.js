@@ -1,3 +1,5 @@
+// App.js
+import EditResidentScreen from "./screens/EditResidentScreen";
 import { ensureTodayInstances } from "./supabase/ensureTodayInstances";
 import { AppState } from "react-native";
 import React, { useEffect, useState } from "react";
@@ -103,6 +105,7 @@ export default function App() {
             <Stack.Screen name="MainTabs" component={MainTabs} />
             <Stack.Screen name="Settings" component={SettingsScreen} />
             <Stack.Screen name="AddResident" component={AddResidentScreen} />
+            <Stack.Screen name="EditResident" component={EditResidentScreen} />
           </>
         ) : (
           <Stack.Screen name="Login" component={LoginScreen} />

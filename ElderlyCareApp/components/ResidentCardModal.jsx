@@ -1,4 +1,6 @@
 // components/ResidentCardModal.jsx
+import { useNavigation } from "@react-navigation/native";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import DateNavigator from "../components/DateNavigator";
 import * as ImagePicker from "expo-image-picker";
 import React, { useState, useEffect } from "react";
@@ -21,6 +23,7 @@ import moment from "moment";
 
 
 export default function ResidentCardModal({ resident, onClose, onUpdateResident }) {
+  const navigation = useNavigation();
   // Custom time picker (shared)
   const [showTimePickerModal, setShowTimePickerModal] = useState(false);
   const [timeContext, setTimeContext] = useState(null);
@@ -29,6 +32,9 @@ export default function ResidentCardModal({ resident, onClose, onUpdateResident 
   const [hour, setHour] = useState("9");
   const [minute, setMinute] = useState("00");
   const [ampm, setAmpm] = useState("AM");
+  const [infoExpanded, setInfoExpanded] = useState(true);
+  const [showMoreInfo, setShowMoreInfo] = useState(false);
+
 
   // resident info edit mode (global for resident fields only)
   const WEEKDAYS = [
@@ -97,6 +103,19 @@ export default function ResidentCardModal({ resident, onClose, onUpdateResident 
     room_number: resident.room_number || "",
     condition: resident.condition || "",
   });
+
+  useEffect(() => {
+    const loadInfoState = async () => {
+      const saved = await AsyncStorage.getItem("resident_info_expanded");
+      if (saved !== null) setInfoExpanded(saved === "true");
+    };
+    loadInfoState();
+  }, []);
+
+  useEffect(() => {
+    AsyncStorage.setItem("resident_info_expanded", String(infoExpanded));
+  }, [infoExpanded]);
+
 
   /* ---------- Helpers ---------- */
 
@@ -295,7 +314,7 @@ export default function ResidentCardModal({ resident, onClose, onUpdateResident 
         label: row.activities?.label || "Unnamed Task",
         status: row.status || "pending",
         scheduled_time: row.scheduled_time,
-          repeatDays: row.activities?.repeat_days || [],   
+        repeatDays: row.activities?.repeat_days || [],
 
       }));
 
@@ -429,7 +448,7 @@ export default function ResidentCardModal({ resident, onClose, onUpdateResident 
 
       const { data: updatedResident, error: updErr } = await supabase
         .from("residents")
-        .select("id, name, age, room_number, condition, photo_url")
+        .select("id, name, age, room_number, condition, guardian_name, guardian_contact, photo_url")
         .eq("id", resident.id)
         .single();
       if (updErr) throw updErr;
@@ -758,132 +777,155 @@ export default function ResidentCardModal({ resident, onClose, onUpdateResident 
           <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 24 }}>
             {/* -------------------- RESIDENT INFO -------------------- */}
             <View style={styles.sectionCard}>
-              {/* Section header */}
+
+              {/* Header row: Title + Edit + Dropdown */}
               <View
                 style={{
                   flexDirection: "row",
                   justifyContent: "space-between",
                   alignItems: "center",
-                  marginBottom: 12,
+                  marginBottom: 8,
                 }}
               >
                 <Text style={styles.sectionTitle}>Resident Info</Text>
 
-                {!editMode ? (
-                  <TouchableOpacity onPress={() => setEditMode(true)}>
-                    <MaterialIcons name="edit" size={22} color="#2563EB" />
+                <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
+
+                  {/* Edit resident button */}
+                  <TouchableOpacity
+                    onPress={() => navigation.navigate("EditResident", { resident })}
+                  >
+
+                    <MaterialIcons
+                      name={editMode ? "close" : "edit"}
+                      size={22}
+                      color={editMode ? "#DC2626" : "#2563EB"}
+                    />
                   </TouchableOpacity>
-                ) : (
-                  <TouchableOpacity onPress={handleCancelResident}>
-                    <MaterialIcons name="close" size={22} color="#ef4444" />
+
+                  {/* Dropdown toggle */}
+                  <TouchableOpacity onPress={() => setInfoExpanded(prev => !prev)}>
+                    <MaterialIcons
+                      name={infoExpanded ? "expand-less" : "expand-more"}
+                      size={26}
+                      color="#2563EB"
+                    />
                   </TouchableOpacity>
-                )}
-              </View>
-
-              {/* Avatar + Info row */}
-              <View style={{ flexDirection: "row", alignItems: "center" }}>
-                <TouchableOpacity onPress={handlePickResidentPhoto}>
-                  <View>
-                    {resident.photo_url ? (
-                      <Image source={{ uri: resident.photo_url }} style={styles.avatar} />
-                    ) : (
-                      <View style={[styles.avatar, styles.defaultAvatar]}>
-                        <MaterialIcons name="person-outline" size={44} color="#9CA3AF" />
-                      </View>
-                    )}
-
-                    {/* Camera badge */}
-                    <View style={styles.cameraBadge}>
-                      <MaterialIcons name="camera-alt" size={16} color="#fff" />
-                    </View>
-                  </View>
-                </TouchableOpacity>
-
-                <View style={{ marginLeft: 14, flex: 1 }}>
-                  {editMode ? (
-                    <>
-                      <TextInput
-                        style={styles.input}
-                        value={formData.name}
-                        onChangeText={(t) => setFormData({ ...formData, name: t })}
-                        placeholder="Name"
-                      />
-
-                      <TextInput
-                        style={styles.input}
-                        value={formData.age}
-                        onChangeText={(t) => setFormData({ ...formData, age: t })}
-                        placeholder="Age"
-                        keyboardType="numeric"
-                      />
-
-                      <TextInput
-                        style={styles.input}
-                        value={formData.room_number}
-                        onChangeText={(t) =>
-                          setFormData({ ...formData, room_number: t })
-                        }
-                        placeholder="Bed / Room"
-                      />
-
-                      <TextInput
-                        style={styles.input}
-                        value={formData.condition}
-                        onChangeText={(t) =>
-                          setFormData({ ...formData, condition: t })
-                        }
-                        placeholder="Condition"
-                      />
-                    </>
-                  ) : (
-                    <>
-                      <Text style={styles.info}>🧓 Age: {resident.age || "—"}</Text>
-                      <Text style={styles.info}>
-                        🛏 Bed: {resident.room_number || "—"}
-                      </Text>
-                      <Text style={styles.info}>
-                        ⚕️ Condition: {resident.condition || "—"}
-                      </Text>
-                    </>
-                  )}
                 </View>
               </View>
 
-              {/* Save / Cancel (Resident Info only) */}
-              {editMode && (
+              {infoExpanded && (
                 <View
                   style={{
-                    flexDirection: "row",
-                    marginTop: 14,
-                    marginHorizontal: 12,
+                    backgroundColor: "#F8FAFC",
+                    padding: 12,
+                    borderRadius: 10,
+                    borderWidth: 1,
+                    borderColor: "#E5E7EB",
                   }}
                 >
+                  {/* Avatar + Basic Info */}
+                  <View style={{ flexDirection: "row", alignItems: "center" }}>
+                    <TouchableOpacity onPress={handlePickResidentPhoto}>
+                      <View>
+                        {resident.photo_url ? (
+                          <Image source={{ uri: resident.photo_url }} style={styles.avatar} />
+                        ) : (
+                          <View style={[styles.avatar, styles.defaultAvatar]}>
+                            <MaterialIcons name="person-outline" size={44} color="#9CA3AF" />
+                          </View>
+                        )}
+                        <View style={styles.cameraBadge}>
+                          <MaterialIcons name="camera-alt" size={16} color="#fff" />
+                        </View>
+                      </View>
+                    </TouchableOpacity>
+
+                    <View style={{ marginLeft: 14, flex: 1 }}>
+                      <Text style={{ fontSize: 15, fontWeight: "700", color: "#111827" }}>
+                        {resident.name}
+                      </Text>
+
+                      <View style={{ marginTop: 6 }}>
+
+                        <View style={{ flexDirection: "row", alignItems: "center", marginBottom: 4 }}>
+                          <Text style={{ fontSize: 13, color: "#6B7280", marginRight: 6 }}>
+                            Age:
+                          </Text>
+                          <Text style={{ fontSize: 13, color: "#111827", fontWeight: "500" }}>
+                            {resident.age || "—"}
+                          </Text>
+                        </View>
+
+                        <View style={{ flexDirection: "row", alignItems: "center", marginBottom: 4 }}>
+                          <Text style={{ fontSize: 13, color: "#6B7280", marginRight: 6 }}>
+                            Bed:
+                          </Text>
+                          <Text style={{ fontSize: 13, color: "#111827", fontWeight: "500" }}>
+                            {resident.room_number || "—"}
+                          </Text>
+                        </View>
+                        <View style={{ marginTop: 6 }}>
+                          <Text style={{ fontSize: 13, color: "#6B7280", marginBottom: 2 }}>
+                            Condition
+                          </Text>
+                          <Text style={{ fontSize: 13, color: "#111827", fontWeight: "500" }}>
+                            {resident.condition || "—"}
+                          </Text>
+                        </View>
+
+
+
+                      </View>
+
+                    </View>
+                  </View>
+
+                  {/* See more toggle */}
                   <TouchableOpacity
-                    style={[styles.cancelBtn, { flex: 1, marginRight: 8 }]}
-                    onPress={handleCancelResident}
-                    disabled={savingResident}
+                    onPress={() => setShowMoreInfo(prev => !prev)}
+                    style={{ marginTop: 8 }}
                   >
-                    <Text style={styles.cancelText}>Cancel</Text>
+                    <Text style={{ fontSize: 13, color: "#2563EB", fontWeight: "600" }}>
+                      {showMoreInfo ? "See less details" : "See more details"}
+                    </Text>
                   </TouchableOpacity>
 
-                  <TouchableOpacity
-                    style={[styles.saveBtn, { flex: 1, marginLeft: 8 }]}
-                    onPress={handleSaveResident}
-                    disabled={savingResident}
-                  >
-                    {savingResident ? (
-                      <ActivityIndicator color="#fff" />
-                    ) : (
-                      <Text style={styles.saveText}>Save</Text>
-                    )}
-                  </TouchableOpacity>
+                  {/* Extra fields */}
+                  {showMoreInfo && (
+                    <View style={{ marginTop: 8 }}>
+
+                      {resident.guardian_name && (
+                        <View style={{ flexDirection: "row", marginBottom: 4 }}>
+                          <Text style={{ fontSize: 13, color: "#6B7280", width: 120 }}>
+                            Guardian Name
+                          </Text>
+                          <Text style={{ fontSize: 13, color: "#111827", fontWeight: "500", flex: 1 }}>
+                            {resident.guardian_name}
+                          </Text>
+                        </View>
+                      )}
+
+                      {resident.guardian_contact && (
+                        <View style={{ flexDirection: "row" }}>
+                          <Text style={{ fontSize: 13, color: "#6B7280", width: 120 }}>
+                            Guardian Contact
+                          </Text>
+                          <Text style={{ fontSize: 13, color: "#111827", fontWeight: "500", flex: 1 }}>
+                            {resident.guardian_contact}
+                          </Text>
+                        </View>
+                      )}
+
+                    </View>
+                  )}
+
                 </View>
               )}
             </View>
 
 
-
-            {/* -------------------- SPECIFIC TASKS (NEW UI) -------------------- */}
+            {/* -------------------- SPECIFIC TASKS  -------------------- */}
             <View style={styles.sectionCard}>
               <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
                 <Text style={styles.sectionTitle}>Specific Tasks</Text>

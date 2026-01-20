@@ -1,25 +1,25 @@
-// screens/AddResidentScreen.jsx
-import Toast from "react-native-toast-message";
-import { SafeAreaView } from "react-native-safe-area-context";
 import React, { useState } from "react";
 import {
   View,
   Text,
   TextInput,
   TouchableOpacity,
+  ScrollView,
   StyleSheet,
 } from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
+import { MaterialIcons } from "@expo/vector-icons";
+import Toast from "react-native-toast-message";
 import { supabase } from "../supabase/supabaseClient";
 
 export default function AddResidentScreen({ navigation }) {
   const [form, setForm] = useState({
     name: "",
     age: "",
-    bed_number: "",
+    room_number: "",
     condition: "",
     guardian_name: "",
     guardian_contact: "",
-    photo_url: "",
   });
 
   const [saving, setSaving] = useState(false);
@@ -29,161 +29,156 @@ export default function AddResidentScreen({ navigation }) {
   };
 
   const handleSubmit = async () => {
-    if (saving) return; // 🔒 prevent double submit
-    if (!form.name || !form.bed_number) {
-      Toast.show({
-        type: "error",
-        text1: "Name and Bed Number are required",
-      });
+    if (saving) return;
 
+    if (!form.name.trim()) {
+      Toast.show({ type: "error", text1: "Name is required" });
       return;
     }
 
     setSaving(true);
 
-    try {
-      const {
-        data: { user },
-        error: userError,
-      } = await supabase.auth.getUser();
+    const {
+      data: { user },
+      error: userError,
+    } = await supabase.auth.getUser();
 
-      if (userError || !user) {
-        Toast.show({
-          type: "error",
-          text1: "User not authenticated",
-        });
-
-        setSaving(false);
-        return;
-      }
-
-      const { data, error } = await supabase
-        .from("residents")
-        .insert([
-          {
-            name: form.name,
-            age: form.age ? parseInt(form.age) : null,
-            room_number: form.bed_number,
-            condition: form.condition,
-            guardian_name: form.guardian_name,
-            guardian_contact: form.guardian_contact,
-            photo_url: form.photo_url || null,
-            owner_id: user.id,
-          },
-        ])
-        .select()
-        .single();
-
-      if (error) {
-        console.error("Supabase error:", error.message);
-        Toast.show({
-          type: "error",
-          text1: "Failed to add resident",
-        });
-
-        setSaving(false);
-        return;
-      }
-
-      navigation.navigate("MainTabs", {
-        screen: "Home",
-        params: {
-          newResident: data,
-        },
-      });
-
+    if (userError || !user) {
+      Toast.show({ type: "error", text1: "User not authenticated" });
       setSaving(false);
-    } catch (err) {
-      console.error("Unexpected error:", err);
-      Toast.show({
-        type: "error",
-        text1: "Something went wrong",
-      });
-      setSaving(false);
+      return;
     }
+
+    const { data, error } = await supabase
+      .from("residents")
+      .insert([
+        {
+          name: form.name.trim(),
+          age: form.age ? parseInt(form.age) : null,
+          room_number: form.room_number || null,
+          condition: form.condition || null,
+          guardian_name: form.guardian_name || null,
+          guardian_contact: form.guardian_contact || null,
+          owner_id: user.id,
+        },
+      ])
+      .select()
+      .single();
+
+    if (error) {
+      Toast.show({ type: "error", text1: "Failed to add resident" });
+      setSaving(false);
+      return;
+    }
+
+    Toast.show({ type: "success", text1: "Resident added" });
+
+    navigation.navigate("MainTabs", {
+      screen: "Home",
+      params: { newResident: data },
+    });
+
+    setSaving(false);
   };
 
   return (
-    <SafeAreaView style={styles.safe} edges={["top"]}>
-      <View style={styles.container}>
-        {/* 🔙 Back button (Web + Mobile) */}
+    <SafeAreaView style={styles.container}>
+      {/* Header */}
+      <View style={styles.header}>
         <TouchableOpacity onPress={() => navigation.goBack()}>
-          <Text style={styles.backText}>← Back</Text>
+          <MaterialIcons name="arrow-back" size={24} color="#2563EB" />
         </TouchableOpacity>
+        <Text style={styles.headerTitle}>Add Resident</Text>
+        <View style={{ width: 24 }} />
+      </View>
 
-        <Text style={styles.title}>Add Resident</Text>
+      <ScrollView contentContainerStyle={styles.form}>
 
         {[
-          { key: "name", label: "Name" },
+          { key: "name", label: "Resident Name" },
           { key: "age", label: "Age", keyboard: "numeric" },
-          { key: "bed_number", label: "Bed No." },
+          { key: "room_number", label: "Room / Bed" },
           { key: "condition", label: "Condition" },
           { key: "guardian_name", label: "Guardian Name" },
-          { key: "guardian_contact", label: "Guardian Contact" },
-          { key: "photo_url", label: "Photo URL" },
+          { key: "guardian_contact", label: "Guardian Contact", keyboard: "phone-pad" },
         ].map((field) => (
-          <TextInput
-            key={field.key}
-            style={styles.input}
-            placeholder={field.label}
-            value={form[field.key]}
-            onChangeText={(text) => handleChange(field.key, text)}
-            keyboardType={field.keyboard || "default"}
-          />
+          <View key={field.key} style={styles.inputGroup}>
+            <Text style={styles.label}>{field.label}</Text>
+            <TextInput
+              style={styles.input}
+              value={form[field.key]}
+              keyboardType={field.keyboard || "default"}
+              onChangeText={(text) => handleChange(field.key, text)}
+            />
+          </View>
         ))}
 
+        {/* Save Button */}
         <TouchableOpacity
-          style={[styles.button, saving && { opacity: 0.6 }]}
+          style={[styles.saveBtn, saving && { opacity: 0.6 }]}
           onPress={handleSubmit}
           disabled={saving}
         >
-          <Text style={styles.buttonText}>
+          <Text style={styles.saveText}>
             {saving ? "Saving..." : "Save Resident"}
           </Text>
         </TouchableOpacity>
-      </View>
+
+      </ScrollView>
     </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  safe: {
-    flex: 1,
-    backgroundColor: "#fff",
+  container: { flex: 1, backgroundColor: "#FFFFFF" },
+
+  header: {
+    flexDirection: "row",
+    alignItems: "center",
+    padding: 14,
+    borderBottomWidth: 1,
+    borderColor: "#E5E7EB",
   },
-  container: {
+  headerTitle: {
     flex: 1,
-    padding: 20,
-    backgroundColor: "#fff",
-  },
-  backText: {
-    color: "#2563EB",
+    textAlign: "center",
     fontSize: 16,
-    marginBottom: 12,
+    fontWeight: "600",
+    color: "#111827",
   },
-  title: {
-    fontSize: 22,
-    fontWeight: "700",
-    marginBottom: 20,
-    color: "#2563EB",
+
+  form: {
+    padding: 16,
+  },
+
+  inputGroup: {
+    marginBottom: 14,
+  },
+  label: {
+    fontSize: 13,
+    color: "#6B7280",
+    marginBottom: 4,
   },
   input: {
     borderWidth: 1,
-    borderColor: "#ccc",
+    borderColor: "#E5E7EB",
     borderRadius: 8,
     padding: 10,
-    marginBottom: 12,
+    fontSize: 14,
+    color: "#111827",
+    backgroundColor: "#F9FAFB",
   },
-  button: {
+
+  saveBtn: {
     backgroundColor: "#2563EB",
-    padding: 15,
+    padding: 14,
     borderRadius: 8,
     alignItems: "center",
-    marginTop: 10,
+    marginTop: 6,
   },
-  buttonText: {
-    color: "#fff",
+  saveText: {
+    color: "#FFFFFF",
     fontWeight: "600",
-    fontSize: 16,
+    fontSize: 15,
   },
 });

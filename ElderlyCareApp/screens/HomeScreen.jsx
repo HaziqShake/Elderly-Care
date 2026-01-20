@@ -58,7 +58,7 @@ export default function HomeScreen({ navigation }) {
       setLoading(true);
       const { data, error } = await supabase
         .from("residents")
-        .select("id, name, age, room_number, condition, photo_url");
+        .select("id, name, age, room_number, condition, guardian_name, guardian_contact, photo_url");
 
       if (error) throw error;
       setResidents(data || []);
