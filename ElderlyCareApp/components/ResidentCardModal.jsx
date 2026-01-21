@@ -93,6 +93,7 @@ export default function ResidentCardModal({ resident, onClose, onUpdateResident 
   const [vitalTime, setVitalTime] = useState(new Date());
   const [editingVital, setEditingVital] = useState(null);
   const [confirmDeleteVital, setConfirmDeleteVital] = useState(null);
+  const [savingVital, setSavingVital] = useState(false);
 
 
 
@@ -1420,9 +1421,11 @@ export default function ResidentCardModal({ resident, onClose, onUpdateResident 
                 style={[styles.addButton, !isToday && { opacity: 0.4 }]}
                 disabled={!isToday}
                 onPress={() => {
+                  if (showVitalsForm) return;
                   setVitalTime(new Date());
                   setShowVitalsForm(true);
                 }}
+
               >
                 <Text style={styles.addButtonText}>+ Add Vitals</Text>
               </TouchableOpacity>
@@ -1588,21 +1591,30 @@ export default function ResidentCardModal({ resident, onClose, onUpdateResident 
 
                     <View style={styles.formRow}>
                       <TouchableOpacity
-                        style={[styles.saveBtn, { flex: 1 }]}
+                        style={[
+                          styles.saveBtn,
+                          { flex: 1, opacity: savingVital ? 0.6 : 1 }
+                        ]}
+                        disabled={savingVital}     // ← THIS prevents multi-tap completely
                         onPress={async () => {
+                          if (savingVital) return;
+                          setSavingVital(true);
+
                           try {
+                            // 🔑 GET SESSION PROPERLY
                             const {
                               data: { session },
+                              error: sessionError,
                             } = await supabase.auth.getSession();
 
-                            if (!session?.user) {
+                            if (sessionError || !session || !session.user) {
                               Toast.show({ type: "error", text1: "User not authenticated" });
                               return;
                             }
 
                             let result;
 
-                            // 🔑 EDIT EXISTING VITAL
+                            // 🔄 EDIT EXISTING
                             if (editingVital) {
                               result = await supabase
                                 .from("vitals")
@@ -1614,7 +1626,7 @@ export default function ResidentCardModal({ resident, onClose, onUpdateResident 
                                 .select()
                                 .single();
                             }
-                            // ➕ ADD NEW VITAL
+                            // ➕ ADD NEW
                             else {
                               result = await supabase
                                 .from("vitals")
@@ -1623,7 +1635,7 @@ export default function ResidentCardModal({ resident, onClose, onUpdateResident 
                                   date: new Date().toISOString().slice(0, 10),
                                   time: moment(vitalTime).format("HH:mm:ss"),
                                   ...vitalForm,
-                                  owner_id: session.user.id,
+                                  owner_id: session.user.id, // ✅ now valid
                                 })
                                 .select()
                                 .single();
@@ -1632,11 +1644,9 @@ export default function ResidentCardModal({ resident, onClose, onUpdateResident 
                             const { data, error } = result;
                             if (error) throw error;
 
-                            // ✅ UPDATE UI
+                            // ✅ Update UI
                             if (editingVital) {
-                              setVitals((prev) =>
-                                prev.map((x) => (x.id === data.id ? data : x))
-                              );
+                              setVitals((prev) => prev.map((x) => (x.id === data.id ? data : x)));
                             } else {
                               setVitals((prev) => [data, ...prev]);
                             }
@@ -1654,12 +1664,14 @@ export default function ResidentCardModal({ resident, onClose, onUpdateResident 
                             });
 
                             Toast.show({ type: "success", text1: "Vital saved" });
-
                           } catch (err) {
                             console.error("Vitals insert error:", err.message || err);
                             Toast.show({ type: "error", text1: "Vitals save failed" });
+                          } finally {
+                            setSavingVital(false);
                           }
                         }}
+
                       >
                         <Text style={styles.saveText}>Save</Text>
                       </TouchableOpacity>
