@@ -6,7 +6,7 @@
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "splash": {
-      "image": "./assets/icon.png",
+      "image": "./assets/splash.png",
       "resizeMode": "contain",
       "backgroundColor": "#ffffff"
     },
@@ -15,11 +15,11 @@
       "icon": "./assets/icon.png"
     },
     "android": {
-      "icon": "./assets/icon-512.png",
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
-        "backgroundImage": "./assets/adaptive-bg.png"
-      }
+        "backgroundColor": "#ffffff"
+      },
+      "package": "com.arsham11.ElderlyCareApp"
     },
     "web": {
       "favicon": "./assets/favicon-32.png",
