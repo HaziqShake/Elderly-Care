@@ -15,9 +15,10 @@
       "icon": "./assets/icon.png"
     },
     "android": {
+      "icon": "./assets/icon-512.png",
       "adaptiveIcon": {
-        "foregroundImage": "./assets/icon.png",
-        "backgroundColor": "#ffffff"
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundImage": "./assets/adaptive-bg.png"
       }
     },
     "web": {

@@ -1,4 +1,5 @@
 // components/ResidentCardModal.jsx
+import * as FileSystem from "expo-file-system";
 import { useNavigation } from "@react-navigation/native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import DateNavigator from "../components/DateNavigator";
@@ -166,37 +167,46 @@ export default function ResidentCardModal({ resident, onClose, onUpdateResident 
       const result = await ImagePicker.launchImageLibraryAsync({
         allowsEditing: true,
         aspect: [1, 1],
-        quality: 0.7,
+        quality: 0.8,
+        base64: true, // 🔑 IMPORTANT
       });
-
 
       if (result.canceled) return;
 
       const asset = result.assets[0];
+
+      // Get auth session (for RLS)
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session?.user) {
+        Toast.show({ type: "error", text1: "Not authenticated" });
+        return;
+      }
+
       const fileExt = asset.uri.split(".").pop() || "jpg";
       const fileName = `${resident.id}.${fileExt}`;
 
-      const formData = new FormData();
-      formData.append("file", {
-        uri: asset.uri,
-        name: fileName,
-        type: "image/jpeg",
-      });
+      // Convert base64 → binary
+      const base64 = asset.base64;
+      const binary = Uint8Array.from(atob(base64), c => c.charCodeAt(0));
 
+      // Upload binary directly
       const { error: uploadError } = await supabase.storage
         .from("resident-photos")
-        .upload(fileName, formData, {
+        .upload(fileName, binary, {
           upsert: true,
+          contentType: "image/jpeg",
         });
 
       if (uploadError) throw uploadError;
 
+      // Get public URL
       const { data } = supabase.storage
         .from("resident-photos")
         .getPublicUrl(fileName);
 
-      const photoUrl = data.publicUrl;
+      const photoUrl = `${data.publicUrl}?t=${Date.now()}`;
 
+      // Save URL to resident row
       const { error: updateError } = await supabase
         .from("residents")
         .update({ photo_url: photoUrl })
@@ -204,15 +214,17 @@ export default function ResidentCardModal({ resident, onClose, onUpdateResident 
 
       if (updateError) throw updateError;
 
+      // Update UI instantly
       onUpdateResident?.({ ...resident, photo_url: photoUrl });
+
+      Toast.show({ type: "success", text1: "Photo updated" });
+
     } catch (err) {
-      console.error("Photo upload failed:", err);
-      Toast.show({
-        type: "error",
-        text1: "Photo upload failed",
-      });
+      console.error("Photo upload failed:", err.message || err);
+      Toast.show({ type: "error", text1: "Photo upload failed" });
     }
   };
+
   const applyPickedTime = () => {
     let h = parseInt(hour, 10);
 
