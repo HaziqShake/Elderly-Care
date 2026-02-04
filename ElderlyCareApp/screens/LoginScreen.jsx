@@ -53,7 +53,7 @@ export default function LoginScreen() {
         });
         if (error) throw error;
       }
-      // ✅ App.js will react via onAuthStateChange
+      // App.js will react via onAuthStateChange
     } catch (e) {
       Toast.show({
         type: "error",
@@ -178,6 +178,7 @@ const styles = StyleSheet.create({
     borderRadius: 10,
     marginBottom: 12,
     fontSize: 15,
+    lineHeight: 20,
   },
   passwordRow: {
     flexDirection: "row",
@@ -194,6 +195,11 @@ const styles = StyleSheet.create({
     padding: 14,
     borderRadius: 10,
     marginTop: 4,
+    shadowColor: "#000",
+    shadowOpacity: 0.1,
+    shadowRadius: 6,
+    shadowOffset: { width: 0, height: 3 },
+    elevation: 2,
   },
   buttonText: {
     color: "#fff",

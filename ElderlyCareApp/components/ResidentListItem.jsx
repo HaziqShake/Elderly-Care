@@ -22,7 +22,7 @@ export default function ResidentListItem({ resident, onPress, isGrid }) {
       {/* AVATAR */}
       {resident.photo_url && !imageError ? (
         <Image
-          key={resident.photo_url} // ✅ force refresh when URL changes
+          key={resident.photo_url} // Force refresh when URL changes
           source={{ uri: resident.photo_url }}
           style={[
             styles.avatar,
@@ -78,6 +78,7 @@ const styles = StyleSheet.create({
   card: {
     position: "relative",
     marginBottom: 16,
+    backgroundColor: "transparent",
   },
   gridCard: {
     width: "100%",
@@ -96,9 +97,9 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   avatarGrid: {
-    width: 70,
-    height: 70,
-    borderRadius: 35,
+    width: 62,
+    height: 62,
+    borderRadius: 31,
     marginBottom: 6,
   },
   avatarList: {
@@ -114,12 +115,12 @@ const styles = StyleSheet.create({
 
   /* ---------- NAME ---------- */
   nameContainer: {
-    width: "100%",          // ⭐ gives text full card width
-    paddingHorizontal: 4,   // small breathing room
+    width: "100%",          // Gives text full card width
+    paddingHorizontal: 4,   // Small breathing room
   },
 
   name: {
-    fontSize: 12,
+    fontSize: 11,
     fontWeight: "600",
     color: "#111",
     textAlign: "center",

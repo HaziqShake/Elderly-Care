@@ -1,7 +1,7 @@
 // App.js
 import EditResidentScreen from "./screens/EditResidentScreen";
 import { ensureTodayInstances } from "./supabase/ensureTodayInstances";
-import { AppState } from "react-native";
+import { AppState, ActivityIndicator, View, StyleSheet } from "react-native";
 import React, { useEffect, useState } from "react";
 import { Platform } from "react-native";
 import { NavigationContainer } from "@react-navigation/native";
@@ -10,6 +10,7 @@ import { createBottomTabNavigator } from "@react-navigation/bottom-tabs";
 import { StatusBar } from "expo-status-bar";
 import { MaterialIcons } from "@expo/vector-icons";
 import Toast from "react-native-toast-message";
+import { toastConfig } from "./components/toastConfig";
 
 import { supabase } from "./supabase/supabaseClient";
 
@@ -38,7 +39,7 @@ function MainTabs() {
         tabBarActiveTintColor: "#fff",
         tabBarInactiveTintColor: "#BFDBFE",
         tabBarStyle: {
-          backgroundColor: "#2563EB", // 🔵 back to blue
+          backgroundColor: "#2563EB", // back to blue
           height: 60,
           borderTopWidth: 0,
         },
@@ -59,7 +60,9 @@ export default function App() {
   useEffect(() => {
   const sub = AppState.addEventListener("change", (state) => {
     if (state === "active") {
-      ensureTodayInstances();
+      ensureTodayInstances().catch((err) => {
+        console.warn("ensureTodayInstances failed:", err.message || err);
+      });
     }
   });
 
@@ -94,7 +97,13 @@ export default function App() {
 
   const isLoggedIn = !!session?.user;
 
-  if (loading) return null;
+  if (loading) {
+    return (
+      <View style={styles.loadingRoot}>
+        <ActivityIndicator size="large" color="#2563EB" />
+      </View>
+    );
+  }
 
   return (
     <NavigationContainer>
@@ -111,7 +120,16 @@ export default function App() {
           <Stack.Screen name="Login" component={LoginScreen} />
         )}
       </Stack.Navigator>
-      <Toast />
+      <Toast position="top" topOffset={40} config={toastConfig} />
     </NavigationContainer>
   );
 }
+
+const styles = StyleSheet.create({
+  loadingRoot: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#F7F8FB",
+  },
+});

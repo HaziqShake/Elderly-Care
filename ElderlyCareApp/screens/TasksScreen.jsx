@@ -1,5 +1,6 @@
 import DateNavigator from "../components/DateNavigator";
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useCallback } from "react";
+import { useFocusEffect } from "@react-navigation/native";
 import {
   View,
   Text,
@@ -12,6 +13,7 @@ import {
 } from "react-native";
 import Toast from "react-native-toast-message";
 import { supabase } from "../supabase/supabaseClient";
+import { ensureTodayInstances } from "../supabase/ensureTodayInstances";
 import { SafeAreaView } from "react-native-safe-area-context";
 import moment from "moment";
 import { MaterialIcons } from "@expo/vector-icons";
@@ -28,6 +30,12 @@ const WEEKDAYS = [
   { label: "F", value: 5 },
   { label: "S", value: 6 },
 ];
+const toLocalDateString = (date) => {
+  const yyyy = date.getFullYear();
+  const mm = String(date.getMonth() + 1).padStart(2, "0");
+  const dd = String(date.getDate()).padStart(2, "0");
+  return `${yyyy}-${mm}-${dd}`;
+};
 
 /* -----------------------------------------------------
    COMMON TASK MODAL (ADD + EDIT)
@@ -37,12 +45,11 @@ function CommonTaskModal({ visible, editingTask, onClose, onSave }) {
   const [time, setTime] = useState(new Date());
   const [repeatDays, setRepeatDays] = useState([0, 1, 2, 3, 4, 5, 6]);
 
-  // custom time picker state
+  // Custom time picker state
   const [showTimePicker, setShowTimePicker] = useState(false);
   const [hour, setHour] = useState("9");
   const [minute, setMinute] = useState("00");
   const [ampm, setAmpm] = useState("AM");
-
 
   useEffect(() => {
     const d = editingTask
@@ -51,9 +58,7 @@ function CommonTaskModal({ visible, editingTask, onClose, onSave }) {
 
     setLabel(editingTask ? editingTask.label : "");
     setTime(d);
-    setRepeatDays(
-      editingTask?.repeat_days || [0, 1, 2, 3, 4, 5, 6]
-    );
+    setRepeatDays(editingTask?.repeat_days || [0, 1, 2, 3, 4, 5, 6]);
 
     let h = d.getHours();
     setAmpm(h >= 12 ? "PM" : "AM");
@@ -61,7 +66,6 @@ function CommonTaskModal({ visible, editingTask, onClose, onSave }) {
     setHour(String(h));
     setMinute(String(d.getMinutes()).padStart(2, "0"));
   }, [editingTask]);
-
 
   const handleSave = () => {
     onSave({
@@ -105,10 +109,7 @@ function CommonTaskModal({ visible, editingTask, onClose, onSave }) {
               return (
                 <TouchableOpacity
                   key={d.value}
-                  style={[
-                    styles.dayCircle,
-                    selected && styles.dayCircleActive,
-                  ]}
+                  style={[styles.dayCircle, selected && styles.dayCircleActive]}
                   onPress={() =>
                     setRepeatDays((prev) =>
                       prev.includes(d.value)
@@ -117,12 +118,7 @@ function CommonTaskModal({ visible, editingTask, onClose, onSave }) {
                     )
                   }
                 >
-                  <Text
-                    style={[
-                      styles.dayText,
-                      selected && styles.dayTextActive,
-                    ]}
-                  >
+                  <Text style={[styles.dayText, selected && styles.dayTextActive]}>
                     {d.label}
                   </Text>
                 </TouchableOpacity>
@@ -139,23 +135,14 @@ function CommonTaskModal({ visible, editingTask, onClose, onSave }) {
               <Text style={styles.saveBtnText}>Save</Text>
             </Pressable>
           </View>
-          {/* 🔽 CUSTOM TIME PICKER MODAL */}
+
+          {/* Custom time picker modal */}
           {showTimePicker && (
-            <Modal
-              transparent
-              animationType="fade"
-              presentationStyle="overFullScreen"
-            >
+            <Modal transparent animationType="fade" presentationStyle="overFullScreen">
               <View
                 style={[
                   styles.modalOverlay,
-                  {
-                    position: "absolute",
-                    top: 0,
-                    left: 0,
-                    right: 0,
-                    bottom: 0,
-                  },
+                  { position: "absolute", top: 0, left: 0, right: 0, bottom: 0 },
                 ]}
               >
                 <View style={[styles.modalCard, { maxHeight: "70%" }]}>
@@ -201,7 +188,6 @@ function CommonTaskModal({ visible, editingTask, onClose, onSave }) {
                       />
                     </View>
 
-
                     {/* Minute */}
                     <View style={{ width: 80 }}>
                       <FlatList
@@ -233,7 +219,6 @@ function CommonTaskModal({ visible, editingTask, onClose, onSave }) {
                       />
                     </View>
 
-
                     {/* AM / PM */}
                     <View style={{ width: 80 }}>
                       {["AM", "PM"].map((p) => {
@@ -259,7 +244,6 @@ function CommonTaskModal({ visible, editingTask, onClose, onSave }) {
                         );
                       })}
                     </View>
-
                   </View>
 
                   <View style={styles.modalButtonsRow}>
@@ -293,8 +277,7 @@ function CommonTaskModal({ visible, editingTask, onClose, onSave }) {
               </View>
             </Modal>
           )}
-          {/* 🔼 END CUSTOM TIME PICKER MODAL */}
-
+          {/* End custom time picker modal */}
         </View>
       </View>
     </Modal>
@@ -309,16 +292,17 @@ export default function TasksScreen() {
   const [editMode, setEditMode] = useState(false);
   const [modalVisible, setModalVisible] = useState(false);
   const [editingTask, setEditingTask] = useState(null);
+  const [confirmDeleteTask, setConfirmDeleteTask] = useState(null);
   const [selectedDate, setSelectedDate] = useState(new Date());
 
-  const todayStr = new Date().toISOString().split("T")[0];
-  const selectedStr = selectedDate.toISOString().split("T")[0];
+  const todayStr = toLocalDateString(new Date());
+  const selectedStr = toLocalDateString(selectedDate);
   const isToday = selectedStr === todayStr;
 
   /* ---------------------------------------------------
      LOAD COMMON TASKS
   --------------------------------------------------- */
-  const loadTasks = async () => {
+  const loadTasks = useCallback(async () => {
     try {
       const {
         data: { user },
@@ -326,8 +310,8 @@ export default function TasksScreen() {
 
       if (!user) return;
 
-      const selectedStr = selectedDate.toISOString().split("T")[0];
-      const weekday = new Date(selectedStr).getDay();
+      const selectedStr = toLocalDateString(selectedDate);
+      const weekday = selectedDate.getDay();
 
       // 1) Fetch all common activities
       const { data: activities, error: actErr } = await supabase
@@ -339,37 +323,43 @@ export default function TasksScreen() {
       if (actErr) throw actErr;
 
       // 2) Ensure daily_task_instances exist for this date
-      for (const act of activities || []) {
-        const repeatDays = act.repeat_days || [];
+      // For today, rely on ensureTodayInstances() to avoid duplicate inserts.
+      if (isToday) {
+        await ensureTodayInstances();
+      } else {
+        for (const act of activities || []) {
+          const repeatDays = act.repeat_days || [];
 
-        // Skip if repeat days set and today not included
-        if (repeatDays.length > 0 && !repeatDays.includes(weekday)) continue;
+          // Skip if repeat days set and today not included
+          if (repeatDays.length > 0 && !repeatDays.includes(weekday)) continue;
 
-        // Check if instance exists
-        const { data: existing, error: existErr } = await supabase
-          .from("daily_task_instances")
-          .select("id")
-          .eq("activity_id", act.id)
-          .eq("date", selectedStr)
-          .is("resident_id", null)
-          .maybeSingle();
-
-        if (existErr) throw existErr;
-
-        // Create if missing
-        if (!existing) {
-          const { error: insertErr } = await supabase
+          // Check if instance exists
+          const { data: existingRows, error: existErr } = await supabase
             .from("daily_task_instances")
-            .insert({
-              activity_id: act.id,
-              resident_id: null,
-              scheduled_time: act.default_time,
-              date: selectedStr,
-              status: "pending",
-              owner_id: user.id,
-            });
+            .select("id")
+            .eq("activity_id", act.id)
+            .eq("date", selectedStr)
+            .is("resident_id", null)
+            .eq("owner_id", user.id)
+            .limit(1);
 
-          if (insertErr) throw insertErr;
+          if (existErr) throw existErr;
+
+          // Create if missing
+          if (!existingRows || existingRows.length === 0) {
+            const { error: insertErr } = await supabase
+              .from("daily_task_instances")
+              .insert({
+                activity_id: act.id,
+                resident_id: null,
+                scheduled_time: act.default_time,
+                date: selectedStr,
+                status: "pending",
+                owner_id: user.id,
+              });
+
+            if (insertErr) throw insertErr;
+          }
         }
       }
 
@@ -392,64 +382,73 @@ export default function TasksScreen() {
 
       if (taskErr) throw taskErr;
 
-      // 4) Map into your UI format
+      // 4) Map into UI format
       const formatted = (tasks || []).map((t) => {
         const repeatDays = t.activities.repeat_days || [];
 
         const repeatDaysArray =
-          repeatDays.length > 0 ? repeatDays : [0, 1, 2, 3, 4, 5, 6]; // everyday
-
+          repeatDays.length > 0 ? repeatDays : [0, 1, 2, 3, 4, 5, 6];
 
         return {
           id: t.id,
           activity_id: t.activity_id,
           label: t.activities.label,
           status: t.status,
-          scheduled_time: t.scheduled_time,        // ✅ add
-          repeat_days: t.activities.repeat_days,   // ✅ add
+          scheduled_time: t.scheduled_time,
+          repeat_days: t.activities.repeat_days,
           timeDisplay: moment(t.scheduled_time, "HH:mm:ss").format("h:mm A"),
           repeatDays: repeatDaysArray,
         };
-
-
       });
 
       setCommonTasks(formatted);
     } catch (err) {
       console.error("Load tasks error:", err.message || err);
     }
-  };
+  }, [selectedDate]);
 
   useEffect(() => {
     loadTasks();
-  }, [selectedDate]);
+  }, [loadTasks]);
+
+  useFocusEffect(
+    useCallback(() => {
+      loadTasks();
+    }, [loadTasks])
+  );
 
   /* ---------------------------------------------------
      TOGGLE STATUS
   --------------------------------------------------- */
   const toggleCommonTask = async (task) => {
+    const {
+      data: { user },
+      error: userError,
+    } = await supabase.auth.getUser();
+    if (userError || !user) {
+      Toast.show({ type: "error", text1: "User not authenticated" });
+      return;
+    }
+
     const newStatus = task.status === "done" ? "pending" : "done";
 
     setCommonTasks((prev) =>
-      prev.map((t) =>
-        t.id === task.id ? { ...t, status: newStatus } : t
-      )
+      prev.map((t) => (t.id === task.id ? { ...t, status: newStatus } : t))
     );
 
     const { error } = await supabase
       .from("daily_task_instances")
       .update({ status: newStatus })
-      .eq("id", task.id);
+      .eq("id", task.id)
+      .eq("owner_id", user.id);
 
     if (error) {
       setCommonTasks((prev) =>
-        prev.map((t) =>
-          t.id === task.id ? { ...t, status: task.status } : t
-        )
+        prev.map((t) => (t.id === task.id ? { ...t, status: task.status } : t))
       );
+      Toast.show({ type: "error", text1: "Failed to update task status" });
     }
   };
-
 
   /* ---------------------------------------------------
      SAVE ADD / EDIT
@@ -498,7 +497,7 @@ export default function TasksScreen() {
         Toast.show({ type: "error", text1: instErr.message });
         return;
       }
-
+      Toast.show({ type: "success", text1: "Task added" });
     } else {
       const { error } = await supabase
         .from("activities")
@@ -521,13 +520,14 @@ export default function TasksScreen() {
         .eq("activity_id", editingTask.activity_id)
         .eq("date", selectedStr)
         .eq("owner_id", user.id);
+      Toast.show({ type: "success", text1: "Task updated" });
     }
-
 
     setModalVisible(false);
     setEditingTask(null);
     loadTasks();
   };
+
   const deleteCommonTask = async (task) => {
     try {
       const {
@@ -540,14 +540,14 @@ export default function TasksScreen() {
         return;
       }
 
-      // 1️⃣ Delete daily instances (today + future)
+      // 1. Delete daily instances (today + future)
       await supabase
         .from("daily_task_instances")
         .delete()
         .eq("activity_id", task.activity_id)
         .eq("owner_id", user.id);
 
-      // 2️⃣ Delete the activity itself
+      // 2. Delete the activity itself
       const { error } = await supabase
         .from("activities")
         .delete()
@@ -556,17 +556,14 @@ export default function TasksScreen() {
 
       if (error) throw error;
 
-      // 3️⃣ Refresh list
+      // 3. Refresh list
       loadTasks();
       Toast.show({ type: "success", text1: "Task deleted" });
-
     } catch (err) {
       console.error("Delete common task error:", err.message);
       Toast.show({ type: "error", text1: "Failed to delete task" });
     }
   };
-
-
 
   /* ---------------------------------------------------
      UI
@@ -580,6 +577,11 @@ export default function TasksScreen() {
         marginBottom: 8,
         flexDirection: "row",
         alignItems: "center",
+        shadowColor: "#000",
+        shadowOpacity: 0.08,
+        shadowRadius: 6,
+        shadowOffset: { width: 0, height: 3 },
+        elevation: 2,
       }}
     >
       {/* Status toggle */}
@@ -610,7 +612,6 @@ export default function TasksScreen() {
           >
             {item.label}
           </Text>
-
 
           <Text style={{ fontSize: 13, fontWeight: "600", color: "#2563EB" }}>
             {item.timeDisplay}
@@ -655,7 +656,7 @@ export default function TasksScreen() {
             <MaterialIcons name="edit" size={22} color="#2563EB" />
           </Pressable>
 
-          <Pressable onPress={() => deleteCommonTask(item)}>
+          <Pressable onPress={() => setConfirmDeleteTask(item)}>
             <MaterialIcons name="delete" size={22} color="#DC2626" />
           </Pressable>
         </View>
@@ -696,9 +697,45 @@ export default function TasksScreen() {
       <CommonTaskModal
         visible={modalVisible}
         editingTask={editingTask}
-        onClose={() => { setModalVisible(false); setEditingTask(null); }}
+        onClose={() => {
+          setModalVisible(false);
+          setEditingTask(null);
+        }}
         onSave={handleSaveCommonTask}
       />
+
+      {confirmDeleteTask && (
+        <Modal transparent animationType="fade">
+          <View style={styles.modalOverlay}>
+            <View style={styles.modalCard}>
+              <Text style={styles.modalTitle}>Delete Task</Text>
+              <Text style={{ color: "#374151", marginBottom: 14, textAlign: "center" }}>
+                Are you sure you want to delete "{confirmDeleteTask.label}"?
+              </Text>
+
+              <View style={styles.modalButtonsRow}>
+                <Pressable
+                  style={styles.cancelBtn}
+                  onPress={() => setConfirmDeleteTask(null)}
+                >
+                  <Text style={styles.cancelBtnText}>Cancel</Text>
+                </Pressable>
+
+                <Pressable
+                  style={styles.saveBtn}
+                  onPress={async () => {
+                    const task = confirmDeleteTask;
+                    setConfirmDeleteTask(null);
+                    await deleteCommonTask(task);
+                  }}
+                >
+                  <Text style={styles.saveBtnText}>Delete</Text>
+                </Pressable>
+              </View>
+            </View>
+          </View>
+        </Modal>
+      )}
     </SafeAreaView>
   );
 }

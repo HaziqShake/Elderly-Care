@@ -38,7 +38,7 @@ const confirmLogout = async () => {
         {/* Header */}
         <TouchableOpacity onPress={() => navigation.goBack()}>
           <Text style={{ color: "#2563EB", marginBottom: 12, fontSize: 16 }}>
-            ← Back
+            Back
           </Text>
         </TouchableOpacity>
 
@@ -50,7 +50,7 @@ const confirmLogout = async () => {
           <View style={{ marginLeft: 12 }}>
             <Text style={styles.label}>Logged in as</Text>
             <Text style={styles.value}>
-              {email || "—"}
+              {email || "-"}
             </Text>
           </View>
         </View>
@@ -127,6 +127,11 @@ const styles = StyleSheet.create({
     backgroundColor: "white",
     padding: 16,
     borderRadius: 12,
+    shadowColor: "#000",
+    shadowOpacity: 0.08,
+    shadowRadius: 6,
+    shadowOffset: { width: 0, height: 3 },
+    elevation: 2,
   },
   label: {
     fontSize: 13,

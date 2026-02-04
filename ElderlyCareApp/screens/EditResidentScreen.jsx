@@ -159,6 +159,7 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: "#111827",
     backgroundColor: "#F9FAFB",
+    lineHeight: 20,
   },
 
   buttonRow: {
@@ -174,6 +175,11 @@ const styles = StyleSheet.create({
   },
   saveBtn: {
     backgroundColor: "#2563EB",
+    shadowColor: "#000",
+    shadowOpacity: 0.1,
+    shadowRadius: 6,
+    shadowOffset: { width: 0, height: 3 },
+    elevation: 2,
   },
   cancelBtn: {
     backgroundColor: "#6B7280",

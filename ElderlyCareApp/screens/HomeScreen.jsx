@@ -1,5 +1,5 @@
 import { useFocusEffect } from "@react-navigation/native";
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import {
   View,
   Text,
@@ -24,14 +24,50 @@ export default function HomeScreen({ navigation }) {
   const [editMode, setEditMode] = useState(false);
   const [residents, setResidents] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [search, setSearch] = useState("");
+  const [debouncedSearch, setDebouncedSearch] = useState("");
   const [selectedResident, setSelectedResident] = useState(null);
+
+  const fetchResidents = useCallback(async ({ silent = false } = {}) => {
+    try {
+      if (silent) {
+        setRefreshing(true);
+      } else {
+        setLoading(true);
+      }
+      const {
+        data: { user },
+        error: userError,
+      } = await supabase.auth.getUser();
+      if (userError || !user) {
+        throw userError || new Error("User not authenticated");
+      }
+
+      const { data, error } = await supabase
+        .from("residents")
+        .select("id, name, age, room_number, condition, guardian_name, guardian_contact, photo_url")
+        .eq("owner_id", user.id);
+
+      if (error) throw error;
+      setResidents(data || []);
+    } catch (err) {
+      console.error("Error fetching residents:", err.message);
+    } finally {
+      if (silent) {
+        setRefreshing(false);
+      } else {
+        setLoading(false);
+      }
+    }
+  }, []);
 
   useEffect(() => {
     fetchResidents();
-  }, []);
+  }, [fetchResidents]);
   useFocusEffect(
     React.useCallback(() => {
+      fetchResidents({ silent: true });
       if (navigation.getState) {
         const route = navigation.getState().routes.find(
           (r) => r.name === "Home"
@@ -45,35 +81,35 @@ export default function HomeScreen({ navigation }) {
             return exists ? prev : [newResident, ...prev];
           });
 
-          // ✅ clear param so it doesn't re-add
+          // Clear param so it doesn't re-add
           navigation.setParams({ newResident: undefined });
         }
       }
-    }, [])
+    }, [fetchResidents, navigation])
   );
 
-
-  const fetchResidents = async () => {
-    try {
-      setLoading(true);
-      const { data, error } = await supabase
-        .from("residents")
-        .select("id, name, age, room_number, condition, guardian_name, guardian_contact, photo_url");
-
-      if (error) throw error;
-      setResidents(data || []);
-    } catch (err) {
-      console.error("Error fetching residents:", err.message);
-    } finally {
-      setLoading(false);
-    }
-  };
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedSearch(search), 200);
+    return () => clearTimeout(t);
+  }, [search]);
 
   const handleDeleteResident = async (resident) => {
+    const {
+      data: { user },
+      error: userError,
+    } = await supabase.auth.getUser();
+    if (userError || !user) {
+      Toast.show({
+        type: "error",
+        text1: "User not authenticated",
+      });
+      return;
+    }
     const { error } = await supabase
       .from("residents")
       .delete()
-      .eq("id", resident.id);
+      .eq("id", resident.id)
+      .eq("owner_id", user.id);
 
     if (error) {
       console.error("Delete error:", error.message);
@@ -94,10 +130,23 @@ export default function HomeScreen({ navigation }) {
   const confirmDeleteResident = async () => {
     if (!residentToDelete) return;
 
+    const {
+      data: { user },
+      error: userError,
+    } = await supabase.auth.getUser();
+    if (userError || !user) {
+      Toast.show({
+        type: "error",
+        text1: "User not authenticated",
+      });
+      return;
+    }
+
     const { error } = await supabase
       .from("residents")
       .delete()
-      .eq("id", residentToDelete.id);
+      .eq("id", residentToDelete.id)
+      .eq("owner_id", user.id);
 
     if (error) {
       Toast.show({
@@ -120,7 +169,7 @@ export default function HomeScreen({ navigation }) {
 
 
   const filtered = residents.filter((r) =>
-    r.name.toLowerCase().includes(search.toLowerCase())
+    r.name.toLowerCase().includes(debouncedSearch.toLowerCase())
   );
 
   if (loading) {
@@ -172,9 +221,10 @@ export default function HomeScreen({ navigation }) {
         data={filtered}
         keyExtractor={(i) => i.id}
         numColumns={3}
-        contentContainerStyle={{ padding: 12, paddingBottom: 120 }}
+        contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: 120, paddingTop: 12 }}
         columnWrapperStyle={{
-          justifyContent: "space-between",
+          justifyContent: "flex-start",
+          columnGap: 8,
           marginBottom: 16,
         }}
         renderItem={({ item }) => (
@@ -245,7 +295,7 @@ export default function HomeScreen({ navigation }) {
             <Text style={styles.confirmTitle}>Delete Resident</Text>
             <Text style={styles.confirmText}>
               Are you sure you want to delete{" "}
-              {residentToDelete?.name}?
+              {residentToDelete?.name}
             </Text>
 
             <View style={styles.modalButtonsRow}>
@@ -284,6 +334,11 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
+    shadowColor: "#000",
+    shadowOpacity: 0.12,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 3,
   },
   headerTitle: {
     fontSize: 20,
@@ -306,6 +361,11 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     borderWidth: 1,
     borderColor: "#E5E7EB",
+    shadowColor: "#000",
+    shadowOpacity: 0.06,
+    shadowRadius: 6,
+    shadowOffset: { width: 0, height: 2 },
+    elevation: 1,
   },
   searchInput: { flex: 1, padding: 8, fontSize: 15 },
   editBtn: {
@@ -317,8 +377,8 @@ const styles = StyleSheet.create({
 
   deleteBadge: {
     position: "absolute",
-    top: -6,
-    right: -6,
+    top: -2,
+    right: 8,
     zIndex: 10,
     backgroundColor: "#DC2626",
     borderRadius: 12,
@@ -328,10 +388,10 @@ const styles = StyleSheet.create({
   fab: {
     position: "absolute",
     right: 20,
-    bottom: 90,
-    width: 56,
-    height: 56,
-    borderRadius: 28,
+    bottom: 70,
+    width: 50,
+    height: 50,
+    borderRadius: 25,
     backgroundColor: "#2563EB",
     alignItems: "center",
     justifyContent: "center",
@@ -339,13 +399,14 @@ const styles = StyleSheet.create({
   },
   fabIcon: {
     color: "#fff",
-    fontSize: 32,
+    fontSize: 28,
     fontWeight: "600",
   },
   gridItemWrapper: {
-    flex: 1,
+    width: "33.333%",
     position: "relative",
     alignItems: "center",
+    paddingHorizontal: 6,
   },
   confirmCard: {
     backgroundColor: "#fff",

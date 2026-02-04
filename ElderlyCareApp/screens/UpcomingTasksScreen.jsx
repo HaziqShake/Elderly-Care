@@ -1,6 +1,7 @@
 // screens/UpcomingTasksScreen.jsx
 import { SafeAreaView } from "react-native-safe-area-context";
 import React, { useEffect, useState, useCallback } from "react";
+import { useFocusEffect } from "@react-navigation/native";
 import { View, Text, StyleSheet, ActivityIndicator, FlatList } from "react-native";
 import { supabase } from "../supabase/supabaseClient";
 import { MaterialIcons } from "@expo/vector-icons";
@@ -10,26 +11,39 @@ const toMinutes = (t) => {
   const [h, m] = t.split(":").map(Number);
   return h * 60 + m;
 };
+const toLocalDateString = (date) => {
+  const yyyy = date.getFullYear();
+  const mm = String(date.getMonth() + 1).padStart(2, "0");
+  const dd = String(date.getDate()).padStart(2, "0");
+  return `${yyyy}-${mm}-${dd}`;
+};
 
 export default function UpcomingTasksScreen() {
   const [loading, setLoading] = useState(true);
   const [tasks, setTasks] = useState([]);
 
-  const fetchTasks = useCallback(async () => {
-    setLoading(true);
+  const fetchTasks = useCallback(async ({ silent = false } = {}) => {
+    if (!silent) setLoading(true);
     try {
-      const today = new Date().toISOString().slice(0, 10);
+      const today = toLocalDateString(new Date());
+      const {
+        data: { user },
+        error: userError,
+      } = await supabase.auth.getUser();
+      if (userError || !user) {
+        throw userError || new Error("User not authenticated");
+      }
 
-      // 👉 FETCH ALL PENDING TASKS FOR TODAY
       const { data, error } = await supabase
         .from("daily_task_instances")
         .select(
           `id, resident_id, scheduled_time, status,
            residents(name),
-           activities(label, type,repeat_days)`
+           activities(label, type, repeat_days)`
         )
         .eq("date", today)
         .eq("status", "pending")
+        .eq("owner_id", user.id)
         .order("scheduled_time", { ascending: true });
 
       if (error) throw error;
@@ -42,23 +56,27 @@ export default function UpcomingTasksScreen() {
       });
 
       setTasks(filtered.filter((t) => t.scheduled_time));
-      return;
-
     } catch (err) {
       console.error("fetchTasks error:", err.message || err);
       setTasks([]);
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   }, []);
 
   useEffect(() => {
     fetchTasks();
-    const iv = setInterval(fetchTasks, 30_000);
-    return () => clearInterval(iv);
   }, [fetchTasks]);
 
-  // 👉 FILTER: overdue OR within next 30 minutes
+  useFocusEffect(
+    useCallback(() => {
+      fetchTasks({ silent: true });
+      const iv = setInterval(() => fetchTasks({ silent: true }), 30_000);
+      return () => clearInterval(iv);
+    }, [fetchTasks])
+  );
+
+  // Filter: overdue OR within next 30 minutes
   const upcoming = tasks.filter((t) => {
     const now = new Date();
     const nowMin = now.getHours() * 60 + now.getMinutes();
@@ -85,18 +103,12 @@ export default function UpcomingTasksScreen() {
         <MaterialIcons name="schedule" color="#2563EB" size={26} />
         <View style={{ marginLeft: 12, flex: 1 }}>
           <View style={styles.row}>
-            <Text
-              style={styles.taskLabel}
-              numberOfLines={2}
-              ellipsizeMode="tail"
-            >
+            <Text style={styles.taskLabel} numberOfLines={2} ellipsizeMode="tail">
               {item.activities?.label || "Unnamed task"}
             </Text>
 
             <View style={[styles.tag, isCommon ? styles.commonTag : styles.specificTag]}>
-              <Text style={styles.tagText}>
-                {isCommon ? "COMMON" : "SPECIFIC"}
-              </Text>
+              <Text style={styles.tagText}>{isCommon ? "COMMON" : "SPECIFIC"}</Text>
             </View>
           </View>
 
@@ -106,9 +118,10 @@ export default function UpcomingTasksScreen() {
             </View>
           )}
 
-          <Text style={styles.residentName}>👵 {residentLabel}</Text>
+          <Text style={styles.residentName}>Resident: {residentLabel}</Text>
           <Text style={styles.time}>
-            ⏰ {new Date(`1970-01-01T${item.scheduled_time}`).toLocaleTimeString([], {
+            Time:{" "}
+            {new Date(`1970-01-01T${item.scheduled_time}`).toLocaleTimeString([], {
               hour: "numeric",
               minute: "2-digit",
               hour12: true,
@@ -127,7 +140,7 @@ export default function UpcomingTasksScreen() {
         {loading ? (
           <ActivityIndicator size="large" color="#2563EB" style={{ marginTop: 30 }} />
         ) : upcoming.length === 0 ? (
-          <Text style={styles.empty}>No upcoming tasks 🎉</Text>
+          <Text style={styles.empty}>No upcoming tasks</Text>
         ) : (
           <FlatList
             data={upcoming}
@@ -162,6 +175,10 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     elevation: 3,
     alignItems: "center",
+    shadowColor: "#000",
+    shadowOpacity: 0.08,
+    shadowRadius: 6,
+    shadowOffset: { width: 0, height: 3 },
   },
   row: {
     flexDirection: "row",

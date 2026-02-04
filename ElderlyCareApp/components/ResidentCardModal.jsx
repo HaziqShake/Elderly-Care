@@ -1,5 +1,5 @@
 // components/ResidentCardModal.jsx
-import * as FileSystem from "expo-file-system";
+import * as FileSystem from "expo-file-system/legacy";
 import { useNavigation } from "@react-navigation/native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import DateNavigator from "../components/DateNavigator";
@@ -16,12 +16,21 @@ import {
   TextInput,
   ActivityIndicator,
   Pressable,
+  Platform,
 } from "react-native";
 import { MaterialIcons } from "@expo/vector-icons";
 import { supabase } from "../supabase/supabaseClient";
+import { ensureTodayInstances } from "../supabase/ensureTodayInstances";
 import Toast from "react-native-toast-message";
+import { toastConfig } from "./toastConfig";
 import moment from "moment";
 
+const toLocalDateString = (date) => {
+  const yyyy = date.getFullYear();
+  const mm = String(date.getMonth() + 1).padStart(2, "0");
+  const dd = String(date.getDate()).padStart(2, "0");
+  return `${yyyy}-${mm}-${dd}`;
+};
 
 export default function ResidentCardModal({ resident, onClose, onUpdateResident }) {
   const navigation = useNavigation();
@@ -63,6 +72,7 @@ export default function ResidentCardModal({ resident, onClose, onUpdateResident 
   const [taskTime, setTaskTime] = useState(new Date());
 
   const [editTasks, setEditTasks] = useState(false);
+  const [confirmDeleteSpecificTask, setConfirmDeleteSpecificTask] = useState(null);
 
 
   // Intake / Output state
@@ -158,9 +168,38 @@ export default function ResidentCardModal({ resident, onClose, onUpdateResident 
 
   // Display 'HH:MM:SS' => 'HH:MM'
   const displayTime = (sqlTime) => {
-    if (!sqlTime) return "—";
+    if (!sqlTime) return "-";
     if (typeof sqlTime === "string") return sqlTime.slice(0, 5);
-    return "—";
+    return "-";
+  };
+
+  const base64ToUint8Array = (base64) => {
+    const chars =
+      "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    const len = base64.length;
+    let bufferLength = len * 0.75;
+    if (base64[len - 1] === "=") bufferLength -= 1;
+    if (base64[len - 2] === "=") bufferLength -= 1;
+
+    const bytes = new Uint8Array(bufferLength);
+    let p = 0;
+
+    for (let i = 0; i < len; i += 4) {
+      const enc1 = chars.indexOf(base64[i]);
+      const enc2 = chars.indexOf(base64[i + 1]);
+      const enc3 = chars.indexOf(base64[i + 2]);
+      const enc4 = chars.indexOf(base64[i + 3]);
+
+      const chr1 = (enc1 << 2) | (enc2 >> 4);
+      const chr2 = ((enc2 & 15) << 4) | (enc3 >> 2);
+      const chr3 = ((enc3 & 3) << 6) | enc4;
+
+      bytes[p++] = chr1;
+      if (base64[i + 2] !== "=") bytes[p++] = chr2;
+      if (base64[i + 3] !== "=") bytes[p++] = chr3;
+    }
+
+    return bytes;
   };
   const handlePickResidentPhoto = async () => {
     try {
@@ -168,7 +207,6 @@ export default function ResidentCardModal({ resident, onClose, onUpdateResident 
         allowsEditing: true,
         aspect: [1, 1],
         quality: 0.8,
-        base64: true, // 🔑 IMPORTANT
       });
 
       if (result.canceled) return;
@@ -182,22 +220,39 @@ export default function ResidentCardModal({ resident, onClose, onUpdateResident 
         return;
       }
 
-      const fileExt = asset.uri.split(".").pop() || "jpg";
+      const fileExt = (asset.uri.split(".").pop() || "jpg").toLowerCase();
       const fileName = `${resident.id}.${fileExt}`;
 
-      // Convert base64 → binary
-      const base64 = asset.base64;
-      const binary = Uint8Array.from(atob(base64), c => c.charCodeAt(0));
+      const contentType =
+        asset.mimeType || (fileExt === "png" ? "image/png" : "image/jpeg");
 
-      // Upload binary directly
-      const { error: uploadError } = await supabase.storage
-        .from("resident-photos")
-        .upload(fileName, binary, {
-          upsert: true,
-          contentType: "image/jpeg",
+      if (Platform.OS === "web") {
+        const resp = await fetch(asset.uri);
+        const blob = await resp.blob();
+
+        const { error: uploadError } = await supabase.storage
+          .from("resident-photos")
+          .upload(fileName, blob, {
+            upsert: true,
+            contentType: blob.type || contentType,
+          });
+
+        if (uploadError) throw uploadError;
+      } else {
+        const base64 = await FileSystem.readAsStringAsync(asset.uri, {
+          encoding: FileSystem.EncodingType?.Base64 ?? "base64",
         });
+        const binary = base64ToUint8Array(base64);
 
-      if (uploadError) throw uploadError;
+        const { error: uploadError } = await supabase.storage
+          .from("resident-photos")
+          .upload(fileName, binary, {
+            upsert: true,
+            contentType,
+          });
+
+        if (uploadError) throw uploadError;
+      }
 
       // Get public URL
       const { data } = supabase.storage
@@ -272,10 +327,10 @@ export default function ResidentCardModal({ resident, onClose, onUpdateResident 
 
       if (!user) return;
 
-      const dateStr = selectedDate.toISOString().split("T")[0];
+      const dateStr = toLocalDateString(selectedDate);
       const weekday = selectedDate.getDay();
 
-      // 1️⃣ Fetch resident linked activities
+      // 1. Fetch resident linked activities
       const { data: residentActs, error: raErr } = await supabase
         .from("resident_activities")
         .select("activity_id, scheduled_time, activities(label, repeat_days)")
@@ -284,39 +339,46 @@ export default function ResidentCardModal({ resident, onClose, onUpdateResident 
 
       if (raErr) throw raErr;
 
-      // 2️⃣ Ensure daily_task_instances exist for this date
-      for (const ra of residentActs || []) {
-        const repeatDays = ra.activities?.repeat_days || [];
+      // 2. Ensure daily_task_instances exist for this date
+      // For today, rely on ensureTodayInstances() to avoid duplicate inserts.
+      if (isToday) {
+        await ensureTodayInstances();
+      } else {
+        for (const ra of residentActs || []) {
+          const repeatDays = ra.activities?.repeat_days || [];
 
-        // Skip if repeat_days set and weekday not included
-        if (repeatDays.length > 0 && !repeatDays.includes(weekday)) continue;
+          // Skip if repeat_days set and weekday not included
+          if (repeatDays.length > 0 && !repeatDays.includes(weekday)) continue;
 
-        const { data: existing } = await supabase
-          .from("daily_task_instances")
-          .select("id")
-          .eq("resident_id", resident.id)
-          .eq("activity_id", ra.activity_id)
-          .eq("date", dateStr)
-          .maybeSingle();
+          const { data: existingRows } = await supabase
+            .from("daily_task_instances")
+            .select("id")
+            .eq("resident_id", resident.id)
+            .eq("activity_id", ra.activity_id)
+            .eq("date", dateStr)
+            .eq("owner_id", user.id)
+            .limit(1);
 
-        if (!existing) {
-          await supabase.from("daily_task_instances").insert({
-            resident_id: resident.id,
-            activity_id: ra.activity_id,
-            scheduled_time: ra.scheduled_time,
-            date: dateStr,
-            status: "pending",
-            owner_id: user.id,
-          });
+          if (!existingRows || existingRows.length === 0) {
+            await supabase.from("daily_task_instances").insert({
+              resident_id: resident.id,
+              activity_id: ra.activity_id,
+              scheduled_time: ra.scheduled_time,
+              date: dateStr,
+              status: "pending",
+              owner_id: user.id,
+            });
+          }
         }
       }
 
-      // 3️⃣ Load daily instances for UI
+      // 3. Load daily instances for UI
       const { data, error } = await supabase
         .from("daily_task_instances")
         .select("id, activity_id, status, scheduled_time, activities(label, repeat_days)")
         .eq("resident_id", resident.id)
         .eq("date", dateStr)
+        .eq("owner_id", user.id)
         .order("scheduled_time", { ascending: true });
 
       if (error) throw error;
@@ -357,13 +419,21 @@ export default function ResidentCardModal({ resident, onClose, onUpdateResident 
       try {
         setIoLoading(true);
 
-        const dateStr = selectedDate.toISOString().split("T")[0];
+        const dateStr = toLocalDateString(selectedDate);
+        const {
+          data: { user },
+          error: userError,
+        } = await supabase.auth.getUser();
+        if (userError || !user) {
+          throw userError || new Error("User not authenticated");
+        }
 
         const { data, error } = await supabase
           .from("intake_output")
           .select("id, date, time, intake_ml, urine_ml, stool")
           .eq("resident_id", resident.id)
           .eq("date", dateStr)
+          .eq("owner_id", user.id)
           .order("time", { ascending: false });
 
         if (error) throw error;
@@ -384,13 +454,21 @@ export default function ResidentCardModal({ resident, onClose, onUpdateResident 
       try {
         setVitalsLoading(true);
 
-        const dateStr = selectedDate.toISOString().split("T")[0];
+        const dateStr = toLocalDateString(selectedDate);
+        const {
+          data: { user },
+          error: userError,
+        } = await supabase.auth.getUser();
+        if (userError || !user) {
+          throw userError || new Error("User not authenticated");
+        }
 
         const { data, error } = await supabase
           .from("vitals")
           .select("*")
           .eq("resident_id", resident.id)
           .eq("date", dateStr)
+          .eq("owner_id", user.id)
           .order("time", { ascending: false });
 
         if (error) throw error;
@@ -408,17 +486,30 @@ export default function ResidentCardModal({ resident, onClose, onUpdateResident 
 
   /* ---------- Local helpers for tasks ---------- */
   const isToday =
-    selectedDate.toISOString().split("T")[0] ===
-    new Date().toISOString().split("T")[0];
+    toLocalDateString(selectedDate) ===
+    toLocalDateString(new Date());
+  const selectedDateLabel = isToday
+    ? "Today"
+    : moment(selectedDate).format("DD MMM YYYY");
 
 
   const toggleStatusImmediate = async (task) => {
     try {
+      const {
+        data: { user },
+        error: userError,
+      } = await supabase.auth.getUser();
+      if (userError || !user) {
+        Toast.show({ type: "error", text1: "User not authenticated" });
+        return;
+      }
+
       const newStatus = task.status === "done" ? "pending" : "done";
       const { error } = await supabase
         .from("daily_task_instances")
         .update({ status: newStatus, created_at: new Date() })
-        .eq("id", task.id);
+        .eq("id", task.id)
+        .eq("owner_id", user.id);
       if (error) throw error;
       setTasks((prev) => prev.map((t) => (t.id === task.id ? { ...t, status: newStatus } : t)));
     } catch (err) {
@@ -524,7 +615,7 @@ export default function ResidentCardModal({ resident, onClose, onUpdateResident 
 
       let result;
 
-      // 🔑 EDIT EXISTING ENTRY
+      // Edit existing entry
       if (editingIo) {
         result = await supabase
           .from("intake_output")
@@ -535,17 +626,35 @@ export default function ResidentCardModal({ resident, onClose, onUpdateResident 
             stool: stoolDbValue,
           })
           .eq("id", editingIo.id)
+          .eq("owner_id", session.user.id)
           .select()
           .single();
       }
-      // ➕ ADD NEW ENTRY
+      // Add new entry
       else {
+        const dateOnly = now.format("YYYY-MM-DD");
+        const timeOnly = now.format("HH:mm:ss");
+        const { data: existingIo } = await supabase
+          .from("intake_output")
+          .select("id")
+          .eq("resident_id", resident.id)
+          .eq("owner_id", session.user.id)
+          .eq("date", dateOnly)
+          .eq("time", timeOnly)
+          .limit(1);
+
+        if (existingIo && existingIo.length > 0) {
+          Toast.show({ type: "error", text1: "Duplicate I/O entry at this time" });
+          setSavingIo(false);
+          return;
+        }
+
         result = await supabase
           .from("intake_output")
           .insert({
             resident_id: resident.id,
-            date: now.format("YYYY-MM-DD"),
-            time: now.format("HH:mm:ss"),
+            date: dateOnly,
+            time: timeOnly,
             intake_ml: newIo.intake_ml ? parseInt(newIo.intake_ml) : null,
             urine_ml: newIo.urine_ml ? parseInt(newIo.urine_ml) : null,
             stool: stoolDbValue,
@@ -558,7 +667,7 @@ export default function ResidentCardModal({ resident, onClose, onUpdateResident 
       const { data, error } = result;
       if (error) throw error;
 
-      // ✅ UPDATE UI
+      // Update UI
       if (editingIo) {
         setIoEntries((prev) =>
           prev.map((x) => (x.id === data.id ? data : x))
@@ -583,97 +692,126 @@ export default function ResidentCardModal({ resident, onClose, onUpdateResident 
    SPECIFIC TASK ADD/EDIT MODAL
 -------------------------------------------------- */
   const saveSpecificTaskFromModal = async () => {
-    const {
-      data: { user },
-      error: userError,
-    } = await supabase.auth.getUser();
+    try {
+      const {
+        data: { user },
+        error: userError,
+      } = await supabase.auth.getUser();
 
-    if (userError || !user) {
-      Toast.show({ type: "error", text1: "User not authenticated" });
-      return;
-    }
-
-    const timeSql = moment(taskTime).format("HH:mm:ss");
-
-    // ADD NEW TASK
-    if (!editingTask) {
-      // 1) Create new activity
-      const { data: act, error: actErr } = await supabase
-        .from("activities")
-        .insert({
-          label: taskLabel,
-          type: "specific",
-          default_time: timeSql,
-          repeat_days: repeatDays,
-          owner_id: user.id,
-        })
-        .select()
-        .single();
-
-      if (actErr) {
-        console.log("Error creating activity:", actErr);
+      if (userError || !user) {
+        Toast.show({ type: "error", text1: "User not authenticated" });
         return;
       }
 
-      // 2) Create resident_activities mapping
-      await supabase.from("resident_activities").insert({
-        resident_id: resident.id,
-        activity_id: act.id,
-        scheduled_time: timeSql,
-        owner_id: user.id,
-      });
+      const timeSql = moment(taskTime).format("HH:mm:ss");
 
+      // ADD NEW TASK
+      if (!editingTask) {
+        // 1) Create new activity
+        const { data: act, error: actErr } = await supabase
+          .from("activities")
+          .insert({
+            label: taskLabel,
+            type: "specific",
+            default_time: timeSql,
+            repeat_days: repeatDays,
+            owner_id: user.id,
+          })
+          .select()
+          .single();
 
-      // 3) Create today's daily instance
-      const today = new Date().toISOString().slice(0, 10);
+        if (actErr) {
+          Toast.show({ type: "error", text1: actErr.message });
+          return;
+        }
 
-      await supabase.from("daily_task_instances").insert({
-        resident_id: resident.id,
-        activity_id: act.id,
-        scheduled_time: timeSql,
-        date: today,
-        status: "pending",
-        owner_id: user.id,
-      });
+        // 2) Create resident_activities mapping
+        const { error: mapErr } = await supabase
+          .from("resident_activities")
+          .insert({
+            resident_id: resident.id,
+            activity_id: act.id,
+            scheduled_time: timeSql,
+            owner_id: user.id,
+          });
+        if (mapErr) {
+          Toast.show({ type: "error", text1: mapErr.message });
+          return;
+        }
+
+        // 3) Create today's daily instance
+        const today = toLocalDateString(new Date());
+        const { error: instErr } = await supabase
+          .from("daily_task_instances")
+          .insert({
+            resident_id: resident.id,
+            activity_id: act.id,
+            scheduled_time: timeSql,
+            date: today,
+            status: "pending",
+            owner_id: user.id,
+          });
+        if (instErr) {
+          Toast.show({ type: "error", text1: instErr.message });
+          return;
+        }
+
+        Toast.show({ type: "success", text1: "Task added" });
+      }
+      // EDIT EXISTING TASK
+      else {
+        const { activity_id } = editingTask;
+
+        // Update task name + default time
+        const { error: actUpdErr } = await supabase
+          .from("activities")
+          .update({
+            label: taskLabel,
+            default_time: timeSql,
+            repeat_days: repeatDays,
+          })
+          .eq("id", activity_id);
+        if (actUpdErr) {
+          Toast.show({ type: "error", text1: actUpdErr.message });
+          return;
+        }
+
+        // Update resident_activities scheduled_time
+        const { error: mapUpdErr } = await supabase
+          .from("resident_activities")
+          .update({ scheduled_time: timeSql })
+          .eq("resident_id", resident.id)
+          .eq("activity_id", activity_id)
+          .eq("owner_id", user.id);
+        if (mapUpdErr) {
+          Toast.show({ type: "error", text1: mapUpdErr.message });
+          return;
+        }
+
+        // Update today's daily instance
+        const today = toLocalDateString(new Date());
+        const { error: instUpdErr } = await supabase
+          .from("daily_task_instances")
+          .update({ scheduled_time: timeSql })
+          .eq("resident_id", resident.id)
+          .eq("activity_id", activity_id)
+          .eq("date", today)
+          .eq("owner_id", user.id);
+        if (instUpdErr) {
+          Toast.show({ type: "error", text1: instUpdErr.message });
+          return;
+        }
+
+        Toast.show({ type: "success", text1: "Task updated" });
+      }
+
+      // Close modal + reload
+      setTaskModalVisible(false);
+      setEditingTask(null);
+      fetchTasks();
+    } catch (err) {
+      Toast.show({ type: "error", text1: "Task save failed" });
     }
-
-    // EDIT EXISTING TASK
-    else {
-      const { activity_id } = editingTask;
-
-      // Update task name + default time
-      await supabase
-        .from("activities")
-        .update({
-          label: taskLabel,
-          default_time: timeSql,
-          repeat_days: repeatDays,
-        })
-        .eq("id", activity_id);
-
-      // Update resident_activities scheduled_time
-      await supabase
-        .from("resident_activities")
-        .update({ scheduled_time: timeSql })
-        .eq("resident_id", resident.id)
-        .eq("activity_id", activity_id);
-
-      // Update today's daily instance
-      const today = new Date().toISOString().slice(0, 10);
-
-      await supabase
-        .from("daily_task_instances")
-        .update({ scheduled_time: timeSql })
-        .eq("resident_id", resident.id)
-        .eq("activity_id", activity_id)
-        .eq("date", today);
-    }
-
-    // Close modal + reload
-    setTaskModalVisible(false);
-    setEditingTask(null);
-    fetchTasks();
-
   };
 
   // OPEN MODAL FOR ADD
@@ -693,7 +831,15 @@ export default function ResidentCardModal({ resident, onClose, onUpdateResident 
   };
   const deleteSpecificTask = async (task) => {
     try {
-      const today = new Date().toISOString().slice(0, 10);
+      const today = toLocalDateString(new Date());
+      const {
+        data: { user },
+        error: userError,
+      } = await supabase.auth.getUser();
+      if (userError || !user) {
+        Toast.show({ type: "error", text1: "User not authenticated" });
+        return;
+      }
 
       // 1. Delete today's daily instance
       await supabase
@@ -703,6 +849,7 @@ export default function ResidentCardModal({ resident, onClose, onUpdateResident 
           resident_id: resident.id,
           activity_id: task.activity_id,
           date: today,
+          owner_id: user.id,
         });
 
       // 2. Delete resident_activities mapping
@@ -712,48 +859,63 @@ export default function ResidentCardModal({ resident, onClose, onUpdateResident 
         .match({
           resident_id: resident.id,
           activity_id: task.activity_id,
+          owner_id: user.id,
         });
 
       // 3. Delete the activity itself
       const { error } = await supabase
         .from("activities")
         .delete()
-        .eq("id", task.activity_id);
+        .eq("id", task.activity_id)
+        .eq("owner_id", user.id);
 
       if (error) throw error;
 
       // 4. Reload tasks
       await fetchTasks();
+      Toast.show({ type: "success", text1: "Task deleted" });
 
     } catch (err) {
       console.log("Delete task error:", err.message || err);
+      Toast.show({ type: "error", text1: "Failed to delete task" });
     }
   };
 
   // TOGGLE STATUS
   const toggleSpecificTaskStatus = async (task) => {
+    const {
+      data: { user },
+      error: userError,
+    } = await supabase.auth.getUser();
+    if (userError || !user) {
+      Toast.show({ type: "error", text1: "User not authenticated" });
+      return;
+    }
+
     const newStatus = task.status === "done" ? "pending" : "done";
 
-    // 1️⃣ Optimistic UI update (instant)
+    // 1. Optimistic UI update (instant)
     setTasks((prev) =>
       prev.map((t) =>
         t.id === task.id ? { ...t, status: newStatus } : t
       )
     );
 
-    // 2️⃣ Backend sync (no waiting for UI)
+    // 2. Backend sync (no waiting for UI)
     const { error } = await supabase
       .from("daily_task_instances")
       .update({ status: newStatus })
-      .eq("id", task.id);
+      .eq("id", task.id)
+      .eq("owner_id", user.id);
 
-    // 3️⃣ Rollback if backend fails
+    // 3. Rollback if backend fails
     if (error) {
       setTasks((prev) =>
         prev.map((t) =>
           t.id === task.id ? { ...t, status: task.status } : t
         )
       );
+      Toast.show({ type: "error", text1: "Failed to update task status" });
     }
 
   };
@@ -762,7 +924,7 @@ export default function ResidentCardModal({ resident, onClose, onUpdateResident 
   /* ---------- Render ---------- */
 
   return (
-    <Modal visible animationType="slide" transparent>
+    <Modal visible animationType="slide" transparent presentationStyle="overFullScreen">
       <View style={styles.overlay}>
         <View style={styles.card}>
           {/* Header */}
@@ -866,7 +1028,7 @@ export default function ResidentCardModal({ resident, onClose, onUpdateResident 
                             Age:
                           </Text>
                           <Text style={{ fontSize: 13, color: "#111827", fontWeight: "500" }}>
-                            {resident.age || "—"}
+                            {resident.age || "-"}
                           </Text>
                         </View>
 
@@ -875,7 +1037,7 @@ export default function ResidentCardModal({ resident, onClose, onUpdateResident 
                             Bed:
                           </Text>
                           <Text style={{ fontSize: 13, color: "#111827", fontWeight: "500" }}>
-                            {resident.room_number || "—"}
+                            {resident.room_number || "-"}
                           </Text>
                         </View>
                         <View style={{ marginTop: 6 }}>
@@ -883,7 +1045,7 @@ export default function ResidentCardModal({ resident, onClose, onUpdateResident 
                             Condition
                           </Text>
                           <Text style={{ fontSize: 13, color: "#111827", fontWeight: "500" }}>
-                            {resident.condition || "—"}
+                            {resident.condition || "-"}
                           </Text>
                         </View>
 
@@ -1052,7 +1214,7 @@ export default function ResidentCardModal({ resident, onClose, onUpdateResident 
                           <MaterialIcons name="edit" size={22} color="#2563EB" />
                         </Pressable>
 
-                        <Pressable onPress={() => deleteSpecificTask(item)}>
+                        <Pressable onPress={() => setConfirmDeleteSpecificTask(item)}>
                           <MaterialIcons name="delete" size={22} color="#DC2626" />
                         </Pressable>
                       </View>
@@ -1160,12 +1322,14 @@ export default function ResidentCardModal({ resident, onClose, onUpdateResident 
 
             {/* Intake / Output (separate) */}
             <View style={styles.sectionCard}>
-              <Text style={styles.sectionTitle}>Intake / Output (Today)</Text>
+              <Text style={styles.sectionTitle}>
+                Intake / Output ({selectedDateLabel})
+              </Text>
 
               {ioLoading ? (
                 <ActivityIndicator color="#2563EB" />
               ) : ioEntries.length === 0 ? (
-                <Text style={{ color: "#6B7280" }}>No entries added today.</Text>
+                <Text style={{ color: "#6B7280" }}>No entries for this date.</Text>
               ) : (
                 ioEntries.map((item) => (
                   <View
@@ -1191,7 +1355,7 @@ export default function ResidentCardModal({ resident, onClose, onUpdateResident 
                       }}
                     >
                       <Text style={styles.ioTime}>
-                        🕒 {item.time ? moment(item.time, "HH:mm:ss").format("h:mm A") : "—"}
+                        Time: {item.time ? moment(item.time, "HH:mm:ss").format("h:mm A") : "-"}
                       </Text>
 
                       {isToday && (
@@ -1258,7 +1422,7 @@ export default function ResidentCardModal({ resident, onClose, onUpdateResident 
                               : {},
                         ]}
                       >
-                        {item.stool ?? "—"}
+                        {item.stool ?? "-"}
                       </Text>
                     </View>
 
@@ -1294,10 +1458,19 @@ export default function ResidentCardModal({ resident, onClose, onUpdateResident 
                       <TouchableOpacity
                         style={styles.saveBtn}
                         onPress={async () => {
+                          const {
+                            data: { user },
+                            error: userError,
+                          } = await supabase.auth.getUser();
+                          if (userError || !user) {
+                            Toast.show({ type: "error", text1: "User not authenticated" });
+                            return;
+                          }
                           const { error } = await supabase
                             .from("intake_output")
                             .delete()
-                            .eq("id", confirmDeleteIo.id);
+                            .eq("id", confirmDeleteIo.id)
+                            .eq("owner_id", user.id);
 
                           if (!error) {
                             setIoEntries((prev) =>
@@ -1328,7 +1501,9 @@ export default function ResidentCardModal({ resident, onClose, onUpdateResident 
               {vitalsLoading ? (
                 <ActivityIndicator color="#2563EB" />
               ) : vitals.length === 0 ? (
-                <Text style={{ color: "#6B7280" }}>No vitals recorded today.</Text>
+                <Text style={{ color: "#6B7280" }}>
+                  No vitals recorded for this date.
+                </Text>
               ) : (
 
                 vitals.map((v) => (
@@ -1353,7 +1528,7 @@ export default function ResidentCardModal({ resident, onClose, onUpdateResident 
                       }}
                     >
                       <Text style={styles.vitalsTime}>
-                        🕒 {v.time ? moment(v.time, "HH:mm:ss").format("h:mm A") : "—"}
+                        Time: {v.time ? moment(v.time, "HH:mm:ss").format("h:mm A") : "-"}
                       </Text>
 
                       {isToday && (
@@ -1403,25 +1578,25 @@ export default function ResidentCardModal({ resident, onClose, onUpdateResident 
                     {/* Grid */}
                     <View style={styles.vitalsGrid}>
                       <Text style={styles.vitalLabel}>BP</Text>
-                      <Text style={styles.vitalValue}>{v.bp || "—"}</Text>
+                      <Text style={styles.vitalValue}>{v.bp || "-"}</Text>
 
                       <Text style={styles.vitalLabel}>Temp</Text>
-                      <Text style={styles.vitalValue}>{v.temp || "—"}</Text>
+                      <Text style={styles.vitalValue}>{v.temp || "-"}</Text>
 
                       <Text style={styles.vitalLabel}>Pulse</Text>
-                      <Text style={styles.vitalValue}>{v.pulse || "—"}</Text>
+                      <Text style={styles.vitalValue}>{v.pulse || "-"}</Text>
 
                       <Text style={styles.vitalLabel}>Resp</Text>
-                      <Text style={styles.vitalValue}>{v.resp || "—"}</Text>
+                      <Text style={styles.vitalValue}>{v.resp || "-"}</Text>
 
-                      <Text style={styles.vitalLabel}>SpO₂</Text>
-                      <Text style={styles.vitalValue}>{v.spo2 || "—"}</Text>
+                      <Text style={styles.vitalLabel}>SpO2</Text>
+                      <Text style={styles.vitalValue}>{v.spo2 || "-"}</Text>
 
                       <Text style={styles.vitalLabel}>Sugar</Text>
-                      <Text style={styles.vitalValue}>{v.sugar || "—"}</Text>
+                      <Text style={styles.vitalValue}>{v.sugar || "-"}</Text>
 
                       <Text style={styles.vitalLabel}>Insulin</Text>
-                      <Text style={styles.vitalValue}>{v.insulin || "—"}</Text>
+                      <Text style={styles.vitalValue}>{v.insulin || "-"}</Text>
                     </View>
                   </View>
                 ))
@@ -1565,7 +1740,7 @@ export default function ResidentCardModal({ resident, onClose, onUpdateResident 
                     <TouchableOpacity
                       style={styles.timeButton}
                       onPress={() => {
-                        setShowVitalsForm(false); // 🔑 IMPORTANT
+                        setShowVitalsForm(false); // Important
 
                         const d = vitalTime || new Date();
                         let h = d.getHours();
@@ -1592,7 +1767,7 @@ export default function ResidentCardModal({ resident, onClose, onUpdateResident 
                         key={field}
                         placeholder={field.toUpperCase()}
                         style={styles.input}
-                        keyboardType="numeric"   // 🔑 ADD THIS
+                        keyboardType="numeric"   // Add this
                         value={vitalForm[field]}
                         onChangeText={(t) =>
                           setVitalForm((prev) => ({ ...prev, [field]: t }))
@@ -1607,13 +1782,13 @@ export default function ResidentCardModal({ resident, onClose, onUpdateResident 
                           styles.saveBtn,
                           { flex: 1, opacity: savingVital ? 0.6 : 1 }
                         ]}
-                        disabled={savingVital}     // ← THIS prevents multi-tap completely
+                        disabled={savingVital}     // Prevents multi-tap
                         onPress={async () => {
                           if (savingVital) return;
                           setSavingVital(true);
 
                           try {
-                            // 🔑 GET SESSION PROPERLY
+                            // Get session properly
                             const {
                               data: { session },
                               error: sessionError,
@@ -1626,7 +1801,7 @@ export default function ResidentCardModal({ resident, onClose, onUpdateResident 
 
                             let result;
 
-                            // 🔄 EDIT EXISTING
+                            // Edit existing
                             if (editingVital) {
                               result = await supabase
                                 .from("vitals")
@@ -1635,19 +1810,37 @@ export default function ResidentCardModal({ resident, onClose, onUpdateResident 
                                   ...vitalForm,
                                 })
                                 .eq("id", editingVital.id)
+                                .eq("owner_id", session.user.id)
                                 .select()
                                 .single();
                             }
-                            // ➕ ADD NEW
+                            // Add new
                             else {
+                              const dateOnly = toLocalDateString(new Date());
+                              const timeOnly = moment(vitalTime).format("HH:mm:ss");
+                              const { data: existingVitals } = await supabase
+                                .from("vitals")
+                                .select("id")
+                                .eq("resident_id", resident.id)
+                                .eq("owner_id", session.user.id)
+                                .eq("date", dateOnly)
+                                .eq("time", timeOnly)
+                                .limit(1);
+
+                              if (existingVitals && existingVitals.length > 0) {
+                                Toast.show({ type: "error", text1: "Duplicate vital entry at this time" });
+                                setSavingVital(false);
+                                return;
+                              }
+
                               result = await supabase
                                 .from("vitals")
                                 .insert({
                                   resident_id: resident.id,
-                                  date: new Date().toISOString().slice(0, 10),
-                                  time: moment(vitalTime).format("HH:mm:ss"),
+                                  date: dateOnly,
+                                  time: timeOnly,
                                   ...vitalForm,
-                                  owner_id: session.user.id, // ✅ now valid
+                                  owner_id: session.user.id, // now valid
                                 })
                                 .select()
                                 .single();
@@ -1656,7 +1849,7 @@ export default function ResidentCardModal({ resident, onClose, onUpdateResident 
                             const { data, error } = result;
                             if (error) throw error;
 
-                            // ✅ Update UI
+                            // Update UI
                             if (editingVital) {
                               setVitals((prev) => prev.map((x) => (x.id === data.id ? data : x)));
                             } else {
@@ -1719,10 +1912,19 @@ export default function ResidentCardModal({ resident, onClose, onUpdateResident 
                       <TouchableOpacity
                         style={styles.saveBtn}
                         onPress={async () => {
+                          const {
+                            data: { user },
+                            error: userError,
+                          } = await supabase.auth.getUser();
+                          if (userError || !user) {
+                            Toast.show({ type: "error", text1: "User not authenticated" });
+                            return;
+                          }
                           const { error } = await supabase
                             .from("vitals")
                             .delete()
-                            .eq("id", confirmDeleteVital.id);
+                            .eq("id", confirmDeleteVital.id)
+                            .eq("owner_id", user.id);
 
                           if (!error) {
                             setVitals((prev) =>
@@ -1744,7 +1946,40 @@ export default function ResidentCardModal({ resident, onClose, onUpdateResident 
               </Modal>
             )}
 
-            {/* 🔽 ADD CUSTOM TIME PICKER MODAL HERE */}
+            {confirmDeleteSpecificTask && (
+              <Modal transparent animationType="fade">
+                <View style={styles.modalOverlay}>
+                  <View style={styles.modalCard}>
+                    <Text style={styles.modalTitle}>Delete Task?</Text>
+                    <Text style={{ color: "#374151", marginBottom: 14, textAlign: "center" }}>
+                      Are you sure you want to delete "{confirmDeleteSpecificTask.label}"?
+                    </Text>
+
+                    <View style={styles.modalButtonsRow}>
+                      <TouchableOpacity
+                        style={styles.cancelBtn}
+                        onPress={() => setConfirmDeleteSpecificTask(null)}
+                      >
+                        <Text style={styles.cancelBtnText}>Cancel</Text>
+                      </TouchableOpacity>
+
+                      <TouchableOpacity
+                        style={styles.saveBtn}
+                        onPress={async () => {
+                          const task = confirmDeleteSpecificTask;
+                          setConfirmDeleteSpecificTask(null);
+                          await deleteSpecificTask(task);
+                        }}
+                      >
+                        <Text style={styles.saveBtnText}>Delete</Text>
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+                </View>
+              </Modal>
+            )}
+
+            {/* Add custom time picker modal here */}
             <Modal
               visible={showTimePickerModal}
               transparent
@@ -1873,12 +2108,15 @@ export default function ResidentCardModal({ resident, onClose, onUpdateResident 
                 </View>
               </View>
             </Modal>
-            {/* 🔼 END CUSTOM TIME PICKER MODAL */}
+            {/* End custom time picker modal */}
           </ScrollView>
 
         </View>
-      </View >
-    </Modal >
+      </View>
+      <View style={styles.toastLayer} pointerEvents="box-none">
+        <Toast position="top" topOffset={10} config={toastConfig} />
+      </View>
+    </Modal>
   );
 }
 
@@ -1888,6 +2126,11 @@ const styles = StyleSheet.create({
     backgroundColor: "rgba(0,0,0,0.4)",
     justifyContent: "center",
     alignItems: "center",
+  },
+  toastLayer: {
+    ...StyleSheet.absoluteFillObject,
+    zIndex: 9999,
+    elevation: 9999,
   },
   card: {
     backgroundColor: "#fff",

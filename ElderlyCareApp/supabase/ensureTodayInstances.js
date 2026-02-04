@@ -4,7 +4,7 @@ import { supabase } from "./supabaseClient";
 export async function ensureTodayInstances() {
   const todayDate = new Date();
   const todayWeekday = todayDate.getDay(); // 0 = Sunday
-  const today = todayDate.toISOString().slice(0, 10);
+  const today = toLocalDateString(todayDate);
   const {
     data: { user },
     error: userError,
@@ -127,4 +127,11 @@ export async function ensureTodayInstances() {
     console.error("ensureTodayInstances ERROR:", err.message);
     return err;
   }
+}
+
+function toLocalDateString(date) {
+  const yyyy = date.getFullYear();
+  const mm = String(date.getMonth() + 1).padStart(2, "0");
+  const dd = String(date.getDate()).padStart(2, "0");
+  return `${yyyy}-${mm}-${dd}`;
 }

@@ -167,6 +167,7 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: "#111827",
     backgroundColor: "#F9FAFB",
+    lineHeight: 20,
   },
 
   saveBtn: {
@@ -175,6 +176,11 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     alignItems: "center",
     marginTop: 6,
+    shadowColor: "#000",
+    shadowOpacity: 0.1,
+    shadowRadius: 6,
+    shadowOffset: { width: 0, height: 3 },
+    elevation: 2,
   },
   saveText: {
     color: "#FFFFFF",
